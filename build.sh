@@ -66,6 +66,18 @@ cp "$OUT/dex/classes.dex" "$OUT/contents/classes.dex"
 echo "==> 5/6 打包并对齐 (make_apk.py)"
 # android/assets/ is the pre-installed media payload; make_apk.py packs it under assets/ without
 # copying it into the staging directory first.
+# 随包字体：源码放在仓库里（OFL，约 240 KB），打包前复制进 assets/。
+# 不能直接放在 android/assets/ 下——那个目录是构建产物，被 .gitignore 忽略，
+# 放在那里会导致克隆后构建出的包静默缺少字体。
+if [ -d "$HERE/localfonts" ]; then
+    rm -rf "$SRC/assets/localfonts"
+    mkdir -p "$SRC/assets"
+    cp -r "$HERE/localfonts" "$SRC/assets/localfonts"
+    echo "    随包字体: $(ls "$HERE/localfonts" | wc -l) 个文件, $(du -sh "$HERE/localfonts" | cut -f1)"
+else
+    echo "    ! localfonts/ 不存在，Google 字体请求将只返回空样式表（文字会回退到系统字体）" >&2
+fi
+
 ASSETS_ARG=""
 [ -d "$SRC/assets" ] && ASSETS_ARG="$SRC/assets"
 LIB_ARG=""
