@@ -55,6 +55,15 @@ public class GameActivity extends Activity {
      * and executed, then {@code render/app.js} imported, then a WebGL context created. None of it depends on
      * which match is being played, so none of it has to wait for one.
      *
+     * <p>All three warm-ups are safe for the same reason the game's own loaders are idempotent: the render
+     * loader checks {@code if (!globalThis.PIXI)} before injecting its own tag, {@code data.loadAll} shares
+     * one promise per file, and {@code loadBoardArt} caches its result — asking first cannot make the game
+     * fetch anything twice.
+     *
+     * <p>Nothing here blocks anything. If a warm-up fails the game simply does what it did before, with one
+     * exception: {@code loadBoardArt} caches a null for the life of the page, so a failed board-art warm-up
+     * is cleared again to let the game retry when a match mounts.
+     *
      * <p>Delayed rather than immediate so it does not compete with the boot's own modules and fonts — a
      * slower lobby to save a slower match would be a bad trade.
      */
@@ -103,6 +112,15 @@ public class GameActivity extends Activity {
         + "import('/js/ui/gameComponents.js').then(function(m){try{sp.data.loadAll(m.GAME_FILES);}catch(e){}},"
         + "function(){});return;}"
         + "if(n<60)setTimeout(w,500);})();"
+        // ---- the official board art (render/boardArt.js). createFieldView waits for it only 2.5 s and
+        // swaps the atlas in place when it lands late, which is exactly the two-stage load players see:
+        // the procedural board first, the real one several seconds later. It is not in this APK (it is
+        // extracted from a game client and served by the host), so it is a network fetch every session.
+        + "import('/js/assets.js').then(function(a){return import('/js/render/boardArt.js')"
+        + ".then(function(b){return b.loadBoardArt(a.assets).then(function(art){"
+        // loadBoardArt caches its outcome for the life of the page, null included. Clearing a null lets the
+        // game retry when a match actually mounts instead of locking in whatever went wrong this early.
+        + "if(!art){try{b.resetBoardArt();}catch(e){}}},function(){});});}).catch(function(){});"
         + "}catch(e){}})();";
 
     @Override
