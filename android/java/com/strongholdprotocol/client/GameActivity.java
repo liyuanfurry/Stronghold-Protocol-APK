@@ -43,6 +43,45 @@ public class GameActivity extends Activity {
     private WebChromeClient chromeClient;
     private boolean pageLoaded;
 
+    /**
+     * Loads the battlefield renderer while the player is still in the lobby instead of on the "LOADING
+     * FIELD" screen, which is where that cost lands today.
+     *
+     * <p>Entering a match mounts the render engine for the first time: {@code /vendor/pixi.min.js} (456 KiB)
+     * and {@code /vendor/pixi-spine.js} (362 KiB) fetched through injected {@code <script>} tags, then parsed
+     * and executed, then {@code render/app.js} imported, then a WebGL context created. None of it depends on
+     * which match is being played, so none of it has to wait for one.
+     *
+     * <p>Safe because the game's loader already tolerates it: it checks {@code if (!globalThis.PIXI)} before
+     * injecting its own tag, and a dynamic import of the same URL resolves to the module instance that is
+     * already in the module map. Delayed rather than immediate so it does not compete with the boot's own
+     * modules and fonts — a slower lobby to save a slower match would be a bad trade.
+     */
+    private void warmRenderEngine(final WebView view) {
+        view.postDelayed(new Runnable() {
+            @Override public void run() {
+                try {
+                    view.evaluateJavascript(WARM_JS, null);
+                    Log.i(TAG, "render engine warm-up requested");
+                } catch (Exception e) {
+                    Log.w(TAG, "render warm-up failed", e);
+                }
+            }
+        }, WARM_DELAY_MS);
+    }
+
+    private static final long WARM_DELAY_MS = 4000;
+
+    /** Best-effort: every failure here is one the game would have hit later anyway. */
+    private static final String WARM_JS =
+        "(function(){try{"
+        + "if(!window.PIXI){var s=document.createElement('script');s.src='/vendor/pixi.min.js';"
+        + "s.onload=function(){try{if(!(window.PIXI&&window.PIXI.spine)){"
+        + "var t=document.createElement('script');t.src='/vendor/pixi-spine.js';document.head.appendChild(t);"
+        + "}}catch(e){}};document.head.appendChild(s);}"
+        + "import('/js/render/app.js').catch(function(){});"
+        + "}catch(e){}})();";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -83,6 +122,7 @@ public class GameActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 pageLoaded = true;
                 bar.setVisibility(View.GONE);
+                warmRenderEngine(view);
             }
 
             @Override
