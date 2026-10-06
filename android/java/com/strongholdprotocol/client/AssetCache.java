@@ -21,6 +21,7 @@ import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
@@ -328,32 +329,75 @@ public final class AssetCache {
         }, "asset-sync").start();
     }
 
+    /**
+     * The stage/level data under /data/ -- stages.json, chess.json, enemies.json and friends.
+     *
+     * <p>Deliberately driven by the list inside this APK rather than a hard-coded array: whatever the
+     * build shipped is exactly what a sync should keep current, so adding a data file upstream needs
+     * no change here.
+     */
+    private List<String> dataPaths() {
+        List<String> out = new ArrayList<String>();
+        try {
+            String[] names = assets.list("gsrv/data");
+            if (names != null) {
+                Arrays.sort(names);
+                for (String n : names) if (n.endsWith(".json")) out.add("/data/" + n);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "cannot list the bundled data/ directory", e);
+        }
+        return out;
+    }
+
+    private static boolean isLoopback(String base) {
+        if (base == null) return false;
+        String b = base.toLowerCase(java.util.Locale.US);
+        return b.contains("//127.0.0.1") || b.contains("//localhost") || b.contains("//[::1]");
+    }
+
     private void sync(String updateBase) {
         final String base = updateBase;
         acquireWake();
         try {
+            // Pointing the updater at this phone's own server compares the device with itself: every
+            // file is already here, so the sweep would cost a full round of requests and change
+            // nothing. Say so instead of doing the work.
+            LocalServer own = App.localServerOf(app);
+            if (own.isRunning() && isLoopback(base)) {
+                finish(true, "更新地址是本机服务器，素材就在本机，已跳过校对");
+                return;
+            }
+
             final LinkedHashSet<String> wanted = new LinkedHashSet<String>();
             String body = httpGetString(base + MANIFEST_PATH);
             JSONObject json = new JSONObject(body);
-            collect(json, wanted);
-            for (String v : VENDOR) wanted.add(v);
-
             String remoteHash = json.opt("version") + ":" + json.opt("hash");
             String current = currentHash();
+            final boolean manifestChanged = !remoteHash.equals(current);
 
-            if (remoteHash.equals(current)) {
-                finish(true, "资源已是最新（版本 " + shortHash(current) + "）");
-                return;
+            if (manifestChanged) {
+                collect(json, wanted);
+                for (String v : VENDOR) wanted.add(v);
             }
 
             readBundle();
             loadMeta();
 
             final List<String> jobs = new ArrayList<String>();
-            // Every path gets checked, not just the missing ones: a file that exists locally may still
-            // be the older one the bundle shipped, and the ETag is what tells the two apart.
-            jobs.addAll(wanted);
+            // Stage/level data is revalidated on every sync, and deliberately *not* gated on the
+            // manifest hash: /data/assets.json indexes artwork only, so a rebalance that rewrites
+            // stages.json or chess.json leaves the manifest -- and the hash -- untouched, and these
+            // files would otherwise never be noticed. Eighteen small conditional requests; the ones
+            // that did not change answer 304 with no body.
+            jobs.addAll(dataPaths());
+            if (manifestChanged) {
+                // Every art path gets checked, not just the missing ones: a file that exists locally
+                // may still be the older one the bundle shipped, and the ETag tells the two apart.
+                jobs.addAll(wanted);
+            }
             Log.i(TAG, "update " + shortHash(current) + " -> " + shortHash(remoteHash)
+                    + (manifestChanged ? "" : " (manifest unchanged, data only)")
                     + ", " + jobs.size() + " paths to check");
 
             final int total = jobs.size();
@@ -403,7 +447,8 @@ public final class AssetCache {
                 Prefs.setManifestHash(app, remoteHash);
                 Prefs.setLastSyncAt(app, System.currentTimeMillis());
                 finish(true, String.format(java.util.Locale.US,
-                    "资源更新完成：%d 个文件，%.1f MB", fetched.get(), transferred.get() / 1048576.0));
+                    "资源更新完成：%d 个文件，%.1f MB%s", fetched.get(), transferred.get() / 1048576.0,
+                    manifestChanged ? "" : "（素材清单未变，只核对了关卡数据）"));
             } else {
                 finish(false, "有 " + failed.get() + " / " + total + " 个文件失败，可重试");
             }
