@@ -61,6 +61,8 @@ public final class AssetCache {
 
     private static final String TAG = "AssetCache";
     private static final String MANIFEST_PATH = "/data/assets.json";
+    /** The second artwork index: official art a host extracted from a game client. */
+    private static final String LOCAL_MANIFEST_PATH = "/data/local-assets.json";
     private static final String META_FILE = "asset-meta.tsv";
 
     // Where the build packed the baseline, relative to the APK's assets/ root.
@@ -104,17 +106,32 @@ public final class AssetCache {
         public final boolean reachable;
         public final String remoteHash;
         public final String currentHash;
+        public final String remoteLocal;
+        public final String currentLocal;
         public final String error;
 
-        Version(boolean reachable, String remoteHash, String currentHash, String error) {
+        Version(boolean reachable, String remoteHash, String currentHash,
+                String remoteLocal, String currentLocal, String error) {
             this.reachable = reachable;
             this.remoteHash = remoteHash;
             this.currentHash = currentHash;
+            this.remoteLocal = remoteLocal;
+            this.currentLocal = currentLocal;
             this.error = error;
         }
 
         public boolean hasUpdate() {
             return reachable && remoteHash != null && !remoteHash.equals(currentHash);
+        }
+
+        /** True when the host's local-client art index changed too. */
+        public boolean hasLocalUpdate() {
+            return reachable && remoteLocal != null && !remoteLocal.isEmpty()
+                && !remoteLocal.equals(currentLocal);
+        }
+
+        public boolean hasAnyUpdate() {
+            return hasUpdate() || hasLocalUpdate();
         }
     }
 
@@ -309,10 +326,37 @@ public final class AssetCache {
         try {
             String body = httpGetString(updateBase + MANIFEST_PATH);
             JSONObject json = new JSONObject(body);
-            return new Version(true, json.opt("version") + ":" + json.opt("hash"), currentHash(), null);
+            String remoteLocal = "";
+            try {
+                remoteLocal = fingerprint(httpGetString(updateBase + LOCAL_MANIFEST_PATH));
+            } catch (Exception e) {
+                // Hosts that never extracted a game client have no local art. One extra request, and its
+                // absence is not an error.
+                Log.i(TAG, "no local-assets.json on this host");
+            }
+            return new Version(true, json.opt("version") + ":" + json.opt("hash"), currentHash(),
+                remoteLocal, Prefs.localArtHash(app), null);
         } catch (Exception e) {
             Log.i(TAG, "version check failed: " + e);
-            return new Version(false, null, currentHash(), String.valueOf(e.getMessage()));
+            return new Version(false, null, currentHash(), "", Prefs.localArtHash(app),
+                String.valueOf(e.getMessage()));
+        }
+    }
+
+    /** Cheap change fingerprint for a manifest body: its length plus a digest. Not a security hash. */
+    private static String fingerprint(String raw) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("MD5").digest(raw.getBytes("UTF-8"));
+            StringBuilder sb = new StringBuilder(40);
+            sb.append(raw.length()).append('-');
+            for (int i = 0; i < 8; i++) {
+                String h = Integer.toHexString(d[i] & 0xff);
+                if (h.length() == 1) sb.append('0');
+                sb.append(h);
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "len" + raw.length();
         }
     }
 
@@ -364,18 +408,17 @@ public final class AssetCache {
      * Adds the optional local-client art to the wanted set.
      *
      * <p>The game ships two indexes, and only one of them is media: {@code /data/assets.json} covers the
-     * web artwork this shell already bundles, while {@code /data/local-assets.json} covers the official art
-     * a host extracted from a game client — the real board atlas, the UI sprites, the emotes. Those live
-     * under {@code /assets/local/...}, so the interception layer could serve them from disk, but they were
-     * never part of the bundle and never part of a sync: roughly 1500 files and ~87 MiB that every session
-     * re-fetched from the host, quietly undoing the "artwork is local" promise for a third of the art.
+     * web artwork this shell bundles, while {@code /data/local-assets.json} covers the official art a host
+     * extracted from a game client — the real board atlas, the UI sprites, the emotes. Those live under
+     * {@code /assets/local/...}, so the interception layer can serve them from disk; they simply were never
+     * in the bundle nor in a sync, and every session re-fetched them.
      *
-     * <p>{@code tiles.json} is not listed anywhere — {@code render/boardArt.js} fetches it from the board
+     * <p>{@code tiles.json} is listed by no index — {@code render/boardArt.js} fetches it from the board
      * atlas's own directory, so it is derived the same way here.
      */
-    private void collectLocalArt(String base, Set<String> wanted) {
+    private void collectLocalArt(String raw, Set<String> wanted) {
         try {
-            JSONObject local = new JSONObject(httpGetString(base + "/data/local-assets.json"));
+            JSONObject local = new JSONObject(raw);
             collect(local, wanted);
 
             JSONObject groups = local.optJSONObject("groups");
@@ -384,10 +427,9 @@ public final class AssetCache {
             String path = atlas == null ? null : atlas.optString("path", "");
             int slash = path.lastIndexOf('/');
             if (slash > 0) wanted.add(path.substring(0, slash + 1) + "tiles.json");
-            Log.i(TAG, "local art listed: " + wanted.size() + " paths so far");
+            Log.i(TAG, "local art listed; " + wanted.size() + " paths to check so far");
         } catch (Exception e) {
-            // Absent on hosts that never extracted a client: not an error, just nothing to add.
-            Log.i(TAG, "no local-assets.json on this host (" + e.getMessage() + ")");
+            Log.w(TAG, "local-assets.json unreadable", e);
         }
     }
 
@@ -438,11 +480,24 @@ public final class AssetCache {
             String current = currentHash();
             final boolean manifestChanged = full || !remoteHash.equals(current);
 
+            // The local-art index is re-read on every sync: it is one small request, and a host can
+            // refresh it without touching the media manifest at all. Its ~1500 files only join the sweep
+            // when it actually changed, so the steady state stays at two requests.
+            String localRaw = null;
+            try {
+                localRaw = httpGetString(base + LOCAL_MANIFEST_PATH);
+            } catch (Exception e) {
+                Log.i(TAG, "no local-assets.json on this host");
+            }
+            final String localHash = localRaw == null ? "" : fingerprint(localRaw);
+            final boolean localChanged = full
+                || (!localHash.isEmpty() && !localHash.equals(Prefs.localArtHash(app)));
+
             if (manifestChanged) {
                 collect(json, wanted);
                 for (String v : VENDOR) wanted.add(v);
-                collectLocalArt(base, wanted);
             }
+            if (localChanged && localRaw != null) collectLocalArt(localRaw, wanted);
 
             readBundle();
             loadMeta();
@@ -509,6 +564,7 @@ public final class AssetCache {
 
             if (failed.get() == 0) {
                 Prefs.setManifestHash(app, remoteHash);
+                if (!localHash.isEmpty()) Prefs.setLocalArtHash(app, localHash);
                 Prefs.setLastSyncAt(app, System.currentTimeMillis());
                 finish(true, String.format(java.util.Locale.US,
                     "资源更新完成：%d 个文件，%.1f MB%s", fetched.get(), transferred.get() / 1048576.0,

@@ -309,15 +309,21 @@ public class MainActivity extends Activity implements AssetCache.Listener {
                 }
                 String cur = AssetCache.shortHash(v.currentHash);
                 String rem = AssetCache.shortHash(v.remoteHash);
-                if (v.hasUpdate()) {
-                    serverInfo.setText("服务器版本：" + rem + "　（本机 " + cur + "，有更新）");
-                    status.setText("发现资源更新：" + cur + " → " + rem
-                        + "，点「在线更新资源」即可，只下载变动的文件。");
-                } else {
-                    serverInfo.setText("服务器版本：" + rem + "　（已是最新）");
-                    if (!auto) status.setText("资源已是最新（版本 " + rem + "）");
+                StringBuilder line = new StringBuilder("服务器版本：").append(rem);
+                line.append(v.hasUpdate() ? "　（本机 " + cur + "，有更新）" : "　（已是最新）");
+                if (v.hasLocalUpdate()) line.append("　·　本机美术也有更新");
+                serverInfo.setText(line.toString());
+
+                if (v.hasAnyUpdate()) {
+                    status.setText((v.hasUpdate() ? "发现资源更新：" + cur + " → " + rem : "发现本机美术更新")
+                        + "，自动同步中（只传变动的文件）…");
+                } else if (!auto) {
+                    status.setText("资源已是最新（版本 " + rem + "）");
                 }
                 refreshResourceInfo();
+                // Sync without being asked: incremental by ETag, so an unchanged tree costs requests
+                // rather than bytes, and the local-art index is compared on the same pass.
+                if (v.hasAnyUpdate()) startUpdate(false);
             }
         });
     }

@@ -18,6 +18,7 @@ public final class Prefs {
     private static final String K_MANIFEST_HASH = "manifestHash";
     private static final String K_ACTIVE_GSRV = "activeGsrv";
     private static final String K_CACHE_BUST = "cacheBust";
+    private static final String K_LOCAL_ART_HASH = "localArtHash";
 
     private Prefs() {}
 
@@ -75,6 +76,15 @@ public final class Prefs {
      * hiding the server's copy of the optional local-client art manifest even after the interception was
      * removed, so the cache is dropped exactly once per bump of this number.
      */
+    /** Fingerprint of the local-client art index last synced, or empty. */
+    public static String localArtHash(Context c) {
+        return sp(c).getString(K_LOCAL_ART_HASH, "");
+    }
+
+    public static void setLocalArtHash(Context c, String v) {
+        sp(c).edit().putString(K_LOCAL_ART_HASH, v == null ? "" : v).apply();
+    }
+
     public static int cacheBust(Context c) {
         return sp(c).getInt(K_CACHE_BUST, 0);
     }
