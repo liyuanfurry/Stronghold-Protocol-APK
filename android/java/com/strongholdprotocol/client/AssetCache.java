@@ -10,6 +10,7 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
@@ -203,6 +204,22 @@ public final class AssetCache {
 
     public boolean isAvailable(String path) {
         return hasOverlay(path) || isBundled(path);
+    }
+
+    /**
+     * Opens a file that ships inside the APK but is not part of the media mirror — currently only the
+     * bundled webfonts under {@code localfonts/}. Not routed through the overlay/etag machinery, because
+     * these are not syncable game assets: they belong to this shell.
+     *
+     * @return a stream the caller must close, or null when the file is missing
+     */
+    public Source openBundled(String assetPath) {
+        try {
+            return new Source(new BufferedInputStream(assets.open(assetPath), 32 * 1024), -1);
+        } catch (Exception e) {
+            Log.w(TAG, "missing bundled asset " + assetPath, e);
+            return null;
+        }
     }
 
     /**

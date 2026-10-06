@@ -1,11 +1,13 @@
 package com.strongholdprotocol.client;
 
+import android.net.Uri;
 import android.util.Log;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import java.io.ByteArrayInputStream;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -25,6 +27,12 @@ public class GameWebViewClient extends WebViewClient {
 
     private static final String TAG = "GameWebViewClient";
 
+    /** Where upstream's index.html pulls its webfonts from, with a render-blocking <link>. */
+    private static final String GFONTS_CSS = "fonts.googleapis.com";
+    private static final String GFONTS_FILES = "fonts.gstatic.com";
+    /** Same-origin path our own offline stylesheet uses for the bundled font files. */
+    private static final String LOCAL_FONT_PATH = "/localfont/";
+
     private final AssetCache cache;
 
     public GameWebViewClient(AssetCache cache) {
@@ -34,8 +42,23 @@ public class GameWebViewClient extends WebViewClient {
     @Override
     public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
         try {
-            String path = request.getUrl().getPath();
+            Uri url = request.getUrl();
+            String host = url.getHost();
+            // Upstream's index.html loads its three text families from Google with a render-blocking
+            // <link>. On a network that cannot reach Google, that one request freezes the first paint
+            // until the connection gives up — which is what "the first load takes forever" actually is,
+            // and it survives localising all 272 MiB of artwork because the fonts are not artwork.
+            if (host != null && (host.equals(GFONTS_CSS) || host.equals(GFONTS_FILES))) {
+                return googleFonts(url.getPath());
+            }
+
+            String path = url.getPath();
             if (path == null) return null;
+
+            if (path.startsWith(LOCAL_FONT_PATH)) {
+                return respond(cache.openBundled("localfonts/" + path.substring(LOCAL_FONT_PATH.length())),
+                    mimeOf(path));
+            }
 
             if (path.startsWith("/assets/") || path.startsWith("/fonts/") || path.startsWith("/vendor/")) {
                 return respond(cache.open(path), mimeOf(path));
@@ -55,6 +78,39 @@ public class GameWebViewClient extends WebViewClient {
             Log.w(TAG, "intercept failed", e);
         }
         return null;
+    }
+
+    /**
+     * Answers Google's font hosts locally.
+     *
+     * <p>The stylesheet is replaced by a bundled one that carries the same {@code @font-face} rules for
+     * Oxanium and Rajdhani (OFL, ~240 KiB, shipped in the APK) and deliberately says nothing about
+     * Noto Sans SC — Android's own CJK font *is* Noto Sans CJK SC, so it falls back to something
+     * visually equivalent instead of costing several megabytes of subset downloads.
+     *
+     * <p>Anything else on those hosts gets an empty stylesheet rather than a hang.
+     */
+    private WebResourceResponse googleFonts(String path) {
+        if (path != null && path.startsWith("/css")) {
+            AssetCache.Source css = cache.openBundled("localfonts/offline.css");
+            if (css != null) return respond(css, "text/css");
+        }
+        return emptyCss();
+    }
+
+    private static WebResourceResponse emptyCss() {
+        try {
+            WebResourceResponse r = new WebResourceResponse("text/css", "utf-8",
+                new ByteArrayInputStream("/* served offline by the client */".getBytes("UTF-8")));
+            r.setStatusCodeAndReasonPhrase(200, "OK");
+            Map<String, String> headers = new HashMap<String, String>();
+            headers.put("Content-Type", "text/css");
+            headers.put("Cache-Control", "public, max-age=86400");
+            r.setResponseHeaders(headers);
+            return r;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static WebResourceResponse respond(AssetCache.Source src, String mime) {
