@@ -1,0 +1,9 @@
+# APIs newer than minSdk that are called *behind a runtime version guard*.
+#
+# audit_api.py only sees the symbol, not the `if (Build.VERSION.SDK_INT >= N)` around the call site,
+# so these are reported as violations. Listing them here keeps the check meaningful for everything
+# else instead of loosening it. If a guard is ever removed these entries become wrong — they are a
+# deliberate acknowledgement, not a suppression.
+android/content/Context.startForegroundService
+android/app/NotificationManager.getNotificationChannel
+android/app/NotificationManager.createNotificationChannel

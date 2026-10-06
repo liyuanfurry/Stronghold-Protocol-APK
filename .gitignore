@@ -1,0 +1,19 @@
+# ---- 构建产物：由 build.sh / *_bundle.py 重新生成，不进版本库 ----
+/out/
+/sdkroot/
+/android/assets/
+*.apk
+*.apk.idsig
+*.zip
+*.log
+
+# ---- 签名密钥：口令在 build.sh 里，公开等于谁都能签出"同一个 App" ----
+# build.sh 会在缺失时自动生成一对新的，所以不提交没有任何影响
+/keys/
+
+# ---- 工具链残留 ----
+.runtest/
+.native-payload/
+.payload-test/
+__pycache__/
+*.pyc
