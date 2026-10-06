@@ -17,7 +17,7 @@ Copyright (C) 2026 本客户端贡献者
 
 本仓库自己编写的源代码与文档（`android/java/**`、`android/res/**`、`android/AndroidManifest.xml`、
 `build.sh`、`make_apk.py`、`make_icons.py`、`audit_api.py`、`build_bundle.py`、`finalize_bundle.py`、
-`fetch_bundle.py`、`fix_etags.py`、`README.md`）以 **GNU 通用公共许可证第 3 版或（由你选择）任何更新版本**
+`fetch_bundle.py`、`fix_etags.py`、`make_localart_bundle.py`、`make_native_payload.py`、`README.md`）以 **GNU 通用公共许可证第 3 版或（由你选择）任何更新版本**
 （GPL-3.0-or-later）发布，全文见 [LICENSE](LICENSE)。
 
 本客户端**不包含也不链接**上游的游戏逻辑代码；它是一个 WebView 加载器 + 资源缓存层，运行时从玩家自己填写的
@@ -29,8 +29,20 @@ Copyright (C) 2026 本客户端贡献者
 
 - `.gitignore` 排除了 `android/assets/**`（约 272 MiB 的干员立绘、Spine 骨骼、音效 BGM、字体、vendor 库）
   和一切构建产物（`*.apk`、`out/`、`keys/`）。
-- 需要素材时，由使用者在本机运行 `build_bundle.py` 自行装配（详见 README），
-  **素材来源是上游发布包或你自己架设的服务器**，本仓库不代为分发。
+- 需要素材时，由使用者在本机自行装配（详见 README），**素材来源是上游发布包或你自己架设的服务器**，
+  本仓库不代为分发。
+
+### 2.1 构建产物里的素材分两份，来源都在你自己那边
+
+由本仓库构建出的 APK 会包含两类素材，**两类都不由本仓库分发**：
+
+| | 内容 | 本机装配方式 |
+|---|---|---|
+| **网页素材** | `public/assets/**`、`public/fonts/**`、`vendor/**`，约 272 MiB | `build_bundle.py`（从上游发布包或你的服务器） |
+| **本机美术** | `/assets/local/**`：官方棋盘图集与裁剪表、界面贴图、表情、玩法说明页等，约 1482 个文件 / 68 MB | `make_localart_bundle.py`（按你服务器上 `data/local-assets.json` 的索引取回） |
+
+「本机美术」这个名字来自上游：它指的是**从《明日方舟》官方客户端本地提取**、再由服务器运营者放到
+`/assets/local/**` 下的那批官方美术。它是**可选**的——服务器没有这份索引时客户端照常工作，只是用简化美术。
 
 ## 3. 不属于本项目、不受 GPL 约束的内容
 
@@ -39,6 +51,9 @@ Copyright (C) 2026 本客户端贡献者
 
 - 上游发布包中的 `public/assets/**`（含从官方客户端本地提取的 3D 棋盘模型与贴图）与 `public/fonts/**`
   （字体归各自作者）；
+- **服务器 `/assets/local/**` 下的官方客户端美术**：棋盘图集 `TX_autochessi_*`、界面贴图、表情、
+  玩法说明页等，由 `data/local-assets.json` 索引。本客户端可以按该索引把它们装配进 APK，
+  但**这不改变它们的权利归属**；
 - 由官方数据表生成的 `data/*.json`。
 
 这些内容**不在 GPL-3.0 授权范围内**，本项目也无权就它们向任何人授予任何权利。本仓库通过
