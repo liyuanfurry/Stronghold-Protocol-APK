@@ -361,6 +361,37 @@ public final class AssetCache {
     }
 
     /**
+     * Adds the optional local-client art to the wanted set.
+     *
+     * <p>The game ships two indexes, and only one of them is media: {@code /data/assets.json} covers the
+     * web artwork this shell already bundles, while {@code /data/local-assets.json} covers the official art
+     * a host extracted from a game client — the real board atlas, the UI sprites, the emotes. Those live
+     * under {@code /assets/local/...}, so the interception layer could serve them from disk, but they were
+     * never part of the bundle and never part of a sync: roughly 1500 files and ~87 MiB that every session
+     * re-fetched from the host, quietly undoing the "artwork is local" promise for a third of the art.
+     *
+     * <p>{@code tiles.json} is not listed anywhere — {@code render/boardArt.js} fetches it from the board
+     * atlas's own directory, so it is derived the same way here.
+     */
+    private void collectLocalArt(String base, Set<String> wanted) {
+        try {
+            JSONObject local = new JSONObject(httpGetString(base + "/data/local-assets.json"));
+            collect(local, wanted);
+
+            JSONObject groups = local.optJSONObject("groups");
+            JSONObject autochess = groups == null ? null : groups.optJSONObject("map/autochess");
+            JSONObject atlas = autochess == null ? null : autochess.optJSONObject("TX_autochessi_D");
+            String path = atlas == null ? null : atlas.optString("path", "");
+            int slash = path.lastIndexOf('/');
+            if (slash > 0) wanted.add(path.substring(0, slash + 1) + "tiles.json");
+            Log.i(TAG, "local art listed: " + wanted.size() + " paths so far");
+        } catch (Exception e) {
+            // Absent on hosts that never extracted a client: not an error, just nothing to add.
+            Log.i(TAG, "no local-assets.json on this host (" + e.getMessage() + ")");
+        }
+    }
+
+    /**
      * The stage/level data under /data/ -- stages.json, chess.json, enemies.json and friends.
      *
      * <p>Deliberately driven by the list inside this APK rather than a hard-coded array: whatever the
@@ -410,6 +441,7 @@ public final class AssetCache {
             if (manifestChanged) {
                 collect(json, wanted);
                 for (String v : VENDOR) wanted.add(v);
+                collectLocalArt(base, wanted);
             }
 
             readBundle();

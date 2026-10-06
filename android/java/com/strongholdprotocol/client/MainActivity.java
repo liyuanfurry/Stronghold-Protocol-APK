@@ -276,7 +276,10 @@ public class MainActivity extends Activity implements AssetCache.Listener {
                 + "但那个哈希只覆盖清单本身（路径和元数据），**不覆盖素材文件内容——"
                 + "上游只重绘了某张图、路径没变时，清单哈希不变，普通更新会说「已是最新」，那张图就更新不了。\n\n"
                 + "完整核对照样把包里 4000 多个文件挨个问一遍（带 ETag，没变的服务器只回 304 不传正文），"
-                + "慢几十秒、请求多，但不会漏掉这种情况。\n\n只在怀疑素材没跟上时用。")
+                + "慢几十秒、请求多，但不会漏掉这种情况。\n\n"
+                + "它同时会把服务器上的「本机美术」清单（data/local-assets.json：官方棋盘图集、UI 贴图、"
+                + "表情等，约 1500 个文件）一并同步进本机覆盖层 —— 那部分约几十 MB，"
+                + "同步一次之后就不用再向服务器取，之后每次都从本机读。\n\n只在需要时用。")
             .setNegativeButton("取消", null)
             .setPositiveButton("开始完整核对", new DialogInterface.OnClickListener() {
                 @Override public void onClick(DialogInterface d, int w) { startUpdate(true); }
