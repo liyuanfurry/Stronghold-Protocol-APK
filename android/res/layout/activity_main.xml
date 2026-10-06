@@ -107,6 +107,21 @@
         </LinearLayout>
 
         <Button
+            android:id="@+id/full_check"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="完整核对素材（慢）" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="清单的哈希只覆盖清单本身，不覆盖素材内容：上游只重绘了某张图时，普通更新会说「已是最新」而查不出来。完整核对会把包里 4000 多个文件挨个问一遍，慢几十秒但不会漏。"
+            android:textColor="@color/dim"
+            android:textSize="11sp" />
+
+        <Button
             android:id="@+id/bundle_import"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

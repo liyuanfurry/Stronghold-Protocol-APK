@@ -27,6 +27,31 @@ Android APK，解决三件事：
 
 ---
 
+## 和同类包的区别
+
+同一件事目前至少有三条线在做。写在这里，是因为「你这个跟别人有啥区别」是必然会遇到的一问——
+与其等人指出，不如自己说清楚，包括别人做得更好的地方。
+
+|  | 本包 | [jingjiangze/Stronghold-Protocol](https://github.com/jingjiangze/Stronghold-Protocol) | [Starst796](https://github.com/Starst796/StrongholdProtocolClient) / [lilyco-42](https://github.com/lilyco-42/StrongholdProtocolClient) |
+|---|---|---|---|
+| 平台 | Android | Android | Windows 桌面 + Android + iOS |
+| APK 体积 | 315 MiB | 518.7 MiB | 222 MiB（debug） |
+| 素材本地化 | ✅ | ✅ | ✅ |
+| 手机自己开服 | ✅ 内嵌真 Node，跑**未经修改**的上游 `server/index.js` | ✅ | ✅ 服务器引擎跑在 WebView 里 |
+| 额外进程 | 有（Node，跑本机服务器时多占几十 MB 内存） | — | 无（同进程） |
+| 手机上切换上游版本 | ✅ 列上游版本、标「最新」「手机现有」、一键切换 | 靠作者重新发包 | 靠作者重新发包 |
+| 从上游 Release 整合包补素材 | ✅ | — | — |
+| 大厅整合 / 签名服务器清单 / 下载站 / 完整发布流水线 | — | ✅ | — |
+| 跨平台、P2P 直连探索 | — | — | ✅ |
+
+**本包的取舍**：优先「跑未经修改的上游服务端」和「手机上直接从 GitHub 切上游版本，不用等作者发包」。
+代价是多一个 Node 进程、包体比 Capacitor 那套大，界面也只做必要的事。
+
+**别人更强的地方直说**：`jingjiangze` 那套功能更全（大厅整合、签名服务器清单、下载站、
+测试候选 → 通过才发的发布流程）；`Starst796` / `lilyco-42` 那套跨了桌面与 iOS，还在做 P2P 直连。
+
+---
+
 ## 三层素材，各管各的
 
 | 层 | 内容 | 位置 | 何时更新 |

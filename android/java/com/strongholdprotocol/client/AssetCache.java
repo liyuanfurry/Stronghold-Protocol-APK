@@ -311,8 +311,22 @@ public final class AssetCache {
 
     public void cancel() { cancelled = true; }
 
-    /** Brings the overlay up to date with the update host. Interruptible and resumable. */
+    /** Brings the overlay up to date with the update host, trusting the manifest hash. */
     public void startSync(final String updateBase, final Listener l) {
+        startSync(updateBase, l, false);
+    }
+
+    /**
+     * @param full revalidate every known path instead of trusting the manifest hash.
+     *
+     * <p>Needed because the upstream manifest's {@code hash} is computed over the manifest body —
+     * paths and metadata — and <b>not</b> over the asset bytes (see {@code tools/fetch-assets.mjs}:
+     * {@code hash: contentHash(body)}). So a texture that is re-rendered without any structural change
+     * leaves the hash identical, the incremental path answers "already up to date", and that artwork is
+     * never fetched. A full sweep asks about every path regardless, which costs a few thousand
+     * conditional requests but cannot miss a content-only change.
+     */
+    public void startSync(final String updateBase, final Listener l, final boolean full) {
         this.listener = l;
         if (running) {
             main.post(new Runnable() {
@@ -325,7 +339,7 @@ public final class AssetCache {
         running = true;
         cancelled = false;
         new Thread(new Runnable() {
-            @Override public void run() { sync(updateBase); }
+            @Override public void run() { sync(updateBase, full); }
         }, "asset-sync").start();
     }
 
@@ -356,7 +370,7 @@ public final class AssetCache {
         return b.contains("//127.0.0.1") || b.contains("//localhost") || b.contains("//[::1]");
     }
 
-    private void sync(String updateBase) {
+    private void sync(String updateBase, final boolean full) {
         final String base = updateBase;
         acquireWake();
         try {
@@ -374,7 +388,7 @@ public final class AssetCache {
             JSONObject json = new JSONObject(body);
             String remoteHash = json.opt("version") + ":" + json.opt("hash");
             String current = currentHash();
-            final boolean manifestChanged = !remoteHash.equals(current);
+            final boolean manifestChanged = full || !remoteHash.equals(current);
 
             if (manifestChanged) {
                 collect(json, wanted);
@@ -397,7 +411,8 @@ public final class AssetCache {
                 jobs.addAll(wanted);
             }
             Log.i(TAG, "update " + shortHash(current) + " -> " + shortHash(remoteHash)
-                    + (manifestChanged ? "" : " (manifest unchanged, data only)")
+                    + (full ? " (full sweep, hash ignored)"
+                            : manifestChanged ? "" : " (manifest unchanged, data only)")
                     + ", " + jobs.size() + " paths to check");
 
             final int total = jobs.size();
@@ -448,7 +463,8 @@ public final class AssetCache {
                 Prefs.setLastSyncAt(app, System.currentTimeMillis());
                 finish(true, String.format(java.util.Locale.US,
                     "资源更新完成：%d 个文件，%.1f MB%s", fetched.get(), transferred.get() / 1048576.0,
-                    manifestChanged ? "" : "（素材清单未变，只核对了关卡数据）"));
+                    full ? "（完整核对）"
+                         : manifestChanged ? "" : "（素材清单未变，只核对了关卡数据）"));
             } else {
                 finish(false, "有 " + failed.get() + " / " + total + " 个文件失败，可重试");
             }

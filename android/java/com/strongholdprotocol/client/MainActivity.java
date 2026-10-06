@@ -32,7 +32,7 @@ import java.util.Locale;
 public class MainActivity extends Activity implements AssetCache.Listener {
 
     private EditText serverField, updateField;
-    private Button updateButton, playButton, checkButton, revertButton;
+    private Button updateButton, playButton, checkButton, revertButton, fullCheckButton;
     private ProgressBar progress;
     private TextView status, builtinInfo, serverInfo, overlayInfo, footer;
     private Button bundleButton;
@@ -60,6 +60,7 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         serverField = (EditText) findViewById(R.id.server);
         updateField = (EditText) findViewById(R.id.update_base);
         updateButton = (Button) findViewById(R.id.update);
+        fullCheckButton = (Button) findViewById(R.id.full_check);
         playButton = (Button) findViewById(R.id.play);
         checkButton = (Button) findViewById(R.id.check);
         revertButton = (Button) findViewById(R.id.revert);
@@ -93,10 +94,13 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         updateField.setText(Prefs.updateBase(this));
 
         updateButton.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { startUpdate(); }
+            @Override public void onClick(View v) { startUpdate(false); }
         });
         playButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { play(); }
+        });
+        fullCheckButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { confirmFullCheck(); }
         });
         checkButton.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { checkVersion(false); }
@@ -248,7 +252,7 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         startActivity(i);
     }
 
-    private void startUpdate() {
+    private void startUpdate(boolean full) {
         String base = updateBaseFromUi();
         if (base.isEmpty()) { needAddress("资源更新地址"); return; }
         if (cache.isRunning()) { Toast.makeText(this, "更新已在进行中", Toast.LENGTH_SHORT).show(); return; }
@@ -256,9 +260,28 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         progress.setIndeterminate(true);
         progress.setProgress(0);
-        status.setText("正在连接 " + base + " …");
+        status.setText(full ? "正在完整核对（无视清单缓存）…" : "正在连接 " + base + " …");
         setBusy(true);
-        cache.startSync(base, this);
+        cache.startSync(base, this, full);
+    }
+
+    /**
+     * Confirms first, because the difference between the two is not obvious and the slow one costs the
+     * server thousands of requests.
+     */
+    private void confirmFullCheck() {
+        new AlertDialog.Builder(this)
+            .setTitle("完整核对素材")
+            .setMessage("平时点「在线更新资源」会先看清单的哈希：没变就直接结束，只发 1 个请求。\n\n"
+                + "但那个哈希只覆盖清单本身（路径和元数据），**不覆盖素材文件内容——"
+                + "上游只重绘了某张图、路径没变时，清单哈希不变，普通更新会说「已是最新」，那张图就更新不了。\n\n"
+                + "完整核对照样把包里 4000 多个文件挨个问一遍（带 ETag，没变的服务器只回 304 不传正文），"
+                + "慢几十秒、请求多，但不会漏掉这种情况。\n\n只在怀疑素材没跟上时用。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("开始完整核对", new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface d, int w) { startUpdate(true); }
+            })
+            .show();
     }
 
     private void checkVersion(final boolean auto) {
@@ -739,6 +762,7 @@ public class MainActivity extends Activity implements AssetCache.Listener {
 
     private void setBusy(boolean busy) {
         updateButton.setEnabled(!busy);
+        fullCheckButton.setEnabled(!busy);
         playButton.setEnabled(!busy);
         checkButton.setEnabled(!busy);
         revertButton.setEnabled(!busy);
