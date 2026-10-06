@@ -163,20 +163,35 @@
                 android:text="启动本机服务器" />
 
             <Button
-                android:id="@+id/srv_use"
+                android:id="@+id/srv_copy"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="12dp"
                 android:layout_weight="1"
-                android:text="让本应用连本机" />
+                android:text="复制连接地址" />
         </LinearLayout>
 
-        <Button
-            android:id="@+id/srv_log"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="查看服务端日志" />
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/srv_use"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="让本应用连本机" />
+
+            <Button
+                android:id="@+id/srv_log"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:text="查看服务端日志" />
+        </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"

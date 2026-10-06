@@ -1,9 +1,13 @@
 package com.strongholdprotocol.client;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.View;
@@ -34,7 +38,7 @@ public class MainActivity extends Activity implements AssetCache.Listener {
     private Button scanButton;
     private LinearLayout scanResults;
     private TextView srvStatus;
-    private Button srvToggle, srvUse, srvLog;
+    private Button srvToggle, srvUse, srvLog, srvCopy;
 
     private AssetCache cache;
     private LanScanner scanner;
@@ -70,6 +74,7 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         srvToggle = (Button) findViewById(R.id.srv_toggle);
         srvUse = (Button) findViewById(R.id.srv_use);
         srvLog = (Button) findViewById(R.id.srv_log);
+        srvCopy = (Button) findViewById(R.id.srv_copy);
 
         serverField.setText(Prefs.server(this));
         updateField.setText(Prefs.updateBase(this));
@@ -97,6 +102,9 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         });
         srvLog.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { showServerLog(); }
+        });
+        srvCopy.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { copyLanUrl(); }
         });
 
         refreshResourceInfo();
@@ -305,6 +313,57 @@ public class MainActivity extends Activity implements AssetCache.Listener {
                 });
             }
         }, "localsrv-ui-start").start();
+    }
+
+    /**
+     * Puts the address other devices should open on the clipboard.
+     *
+     * <p>The preference order matters: the LAN address is the one worth sharing, the loopback address
+     * is useful to nobody but this phone, and a scanned-in server is what the player was last looking
+     * at. Whichever it copies is fed back in the toast so a wrong guess is immediately visible.
+     */
+    private void copyLanUrl() {
+        LocalServer srv = App.localServerOf(this);
+        String label, url = null;
+
+        if (srv.isRunning()) {
+            String ip = NetInfo.localIpv4();
+            if (ip != null) {
+                url = "http://" + ip + ":" + srv.port();
+                label = "同网段设备连接地址";
+            } else {
+                url = srv.url();
+                label = "本机地址（未连接局域网，同网段连不上）";
+            }
+        } else {
+            String field = Prefs.normalizeServer(serverField.getText().toString());
+            if (!field.isEmpty()) {
+                url = field;
+                label = "服务器地址";
+            } else {
+                label = null;
+            }
+        }
+
+        if (url == null) {
+            Toast.makeText(this, "没有可复制的地址：先填服务器地址，或启动本机服务器",
+                Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        try {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("卫戍协议 服务器地址", url));
+        } catch (Throwable t) {
+            Toast.makeText(this, "复制失败：" + t, Toast.LENGTH_LONG).show();
+            return;
+        }
+        // Android 13+ shows its own "copied" confirmation; a second toast on top of it is noise.
+        if (Build.VERSION.SDK_INT < 33) {
+            Toast.makeText(this, "已复制" + label + "：" + url, Toast.LENGTH_LONG).show();
+        } else {
+            status.setText("已复制" + label + "：" + url);
+        }
     }
 
     private void useLocalServer() {
