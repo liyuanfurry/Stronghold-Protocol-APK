@@ -2,6 +2,7 @@
 /out/
 /sdkroot/
 /android/assets/
+/android/lib/
 *.apk
 *.apk.idsig
 *.zip
@@ -13,6 +14,7 @@
 
 # ---- 工具链残留 ----
 .runtest/
+.runout
 .native-payload/
 .payload-test/
 __pycache__/

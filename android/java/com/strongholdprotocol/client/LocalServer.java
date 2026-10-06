@@ -57,10 +57,14 @@ public final class LocalServer {
         void onExit(int code);
     }
 
+    /** The runtime ships as lib/arm64-v8a/libnode.so, so the installer puts it here. */
+    private static final String NODE_LIB = "libnode.so";
+
     private final Context app;
     private final File root;
     private final File nodeBin;
     private final File libDir;
+    private final File nativeDir;
     private final File gsrvDir;
     private final ArrayDeque<String> log = new ArrayDeque<String>();
 
@@ -72,8 +76,13 @@ public final class LocalServer {
     public LocalServer(Context c) {
         this.app = c.getApplicationContext();
         this.root = new File(this.app.getFilesDir(), "localsrv");
-        this.nodeBin = new File(root, "node/bin/node");
-        this.libDir = new File(root, "node/lib");
+        // Executed straight out of the native library directory rather than from app storage: Android
+        // refuses to execve() a file in an app's home directory (verified on-device — mode 0700,
+        // canExecute() true, still EACCES), while the native library directory is always executable
+        // and its mode is set by the installer, so no runtime chmod is involved either.
+        this.nativeDir = new File(this.app.getApplicationInfo().nativeLibraryDir);
+        this.nodeBin = new File(nativeDir, NODE_LIB);
+        this.libDir = nativeDir;
         this.gsrvDir = new File(root, "gsrv");
     }
 
@@ -163,10 +172,7 @@ public final class LocalServer {
     public synchronized void unpack(Listener l) throws Exception {
         String stamp = versionName() + ":" + payloadCount();
         File stampFile = new File(root, STAMP);
-        // Also re-do the work if node is present but still not runnable: a payload unpacked by an
-        // earlier build could be sitting there with an unusable mode, and re-extracting heals it.
-        if (stampFile.isFile() && nodeBin.isFile() && runnable(nodeBin)
-                && stamp.equals(readText(stampFile).trim())) {
+        if (stampFile.isFile() && stamp.equals(readText(stampFile).trim())) {
             Log.i(TAG, "payload already unpacked");
             return;
         }
@@ -207,7 +213,6 @@ public final class LocalServer {
                 try { fos.close(); } catch (Exception ignored) { }
                 try { in.close(); } catch (Exception ignored) { }
             }
-            if ("755".equals(row[1])) makeExecutable(out);
             done++;
             if (l != null) l.onUnpack(done, rows.size(), rel);
         }
@@ -216,55 +221,18 @@ public final class LocalServer {
         Log.i(TAG, "payload unpacked: " + done + " files");
     }
 
-    /**
-     * Makes a file runnable, and does not trust {@code File.setExecutable} to do it.
-     *
-     * <p>Measured on-device, a dynamically linked ELF needs <em>read</em> as well as execute:
-     *
-     * <pre>
-     *   mode 100 / 111 / 644  -> Permission denied (error 13 from execve)
-     *   mode 500 / 700 / 755  -> runs
-     * </pre>
-     *
-     * <p>Android's {@code File.setExecutable(true, false)} chmods to exactly {@code 0111} — execute
-     * only, read bits cleared — so it "succeeds" while producing a file that cannot actually run. That
-     * is what broke the first build. {@code Os.chmod} sets the mode literally; {@code /system/bin/chmod}
-     * (toybox) is the fallback, and the result is asserted on read+execute rather than execute alone.
-     */
-    private void makeExecutable(File f) {
-        String path = f.getAbsolutePath();
-        try {
-            android.system.Os.chmod(path, 0700);
-        } catch (Throwable t) {
-            note("Os.chmod 失败: " + t);
-        }
-        if (!runnable(f)) {
-            Process p = null;
-            try {
-                p = new ProcessBuilder("/system/bin/chmod", "700", path).redirectErrorStream(true).start();
-                p.waitFor();
-            } catch (Throwable t) {
-                note("/system/bin/chmod 失败: " + t);
-            } finally {
-                if (p != null) try { p.destroy(); } catch (Throwable ignored) { }
-            }
-        }
-        note("可执行位 " + path + " -> mode=" + modeOf(path)
-            + " readable=" + f.canRead() + " executable=" + f.canExecute());
-    }
-
-    /** Execute alone is not enough: the linker has to read the binary too. */
-    private static boolean runnable(File f) {
-        return f.canRead() && f.canExecute();
-    }
-
-    private static String modeOf(String path) {
-        try {
-            return String.format(java.util.Locale.US, "%04o",
-                android.system.Os.stat(path).st_mode & 0777);
-        } catch (Throwable t) {
-            return "?(" + t.getClass().getSimpleName() + ")";
-        }
+    /** Everything worth knowing when the child refuses to start. */
+    private String describeRuntime() {
+        return "node  " + nodeBin.getAbsolutePath()
+            + "\n       存在=" + nodeBin.isFile()
+            + " 可读=" + nodeBin.canRead()
+            + " 可执行=" + nodeBin.canExecute()
+            + " 大小=" + nodeBin.length()
+            + "\nlibs  " + libDir.getAbsolutePath()
+            + " 可读=" + libDir.canRead()
+            + "\ngsrv  " + gsrvDir.getAbsolutePath()
+            + " 可读=" + gsrvDir.canRead()
+            + " 脚本=" + new File(gsrvDir, "server/index.js").isFile();
     }
 
     public void wipePayload() {
@@ -305,18 +273,12 @@ public final class LocalServer {
         env.put("HOST", "0.0.0.0");
         env.put("NODE_ENV", "production");
 
-        note("环境 LD_LIBRARY_PATH=" + env.get("LD_LIBRARY_PATH"));
+        note("LD_LIBRARY_PATH=" + env.get("LD_LIBRARY_PATH"));
+        note(describeRuntime());
         try {
             process = pb.start();
         } catch (Exception e) {
             note("拉起 node 失败: " + e);
-            note("  node  : mode=" + modeOf(nodeBin.getAbsolutePath())
-                + " canExecute=" + nodeBin.canExecute() + " size=" + nodeBin.length());
-            note("  gsrv  : dir mode=" + modeOf(gsrvDir.getAbsolutePath())
-                + " canRead=" + gsrvDir.canRead());
-            note("  脚本  : " + new File(gsrvDir, "server/index.js").isFile());
-            note("  libs  : dir canRead=" + libDir.canRead() + " mode=" + modeOf(libDir.getAbsolutePath()));
-            note("  root  : mode=" + modeOf(root.getAbsolutePath()));
             throw e;
         }
         note("node 已拉起");

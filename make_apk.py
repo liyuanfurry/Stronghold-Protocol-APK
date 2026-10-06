@@ -54,7 +54,7 @@ def crc_of(path):
     return crc & 0xFFFFFFFF
 
 
-def collect(src, assets_dir=None):
+def collect(src, assets_dir=None, lib_dir=None):
     out = []
     for root, dirs, files in os.walk(src):
         dirs.sort()
@@ -62,21 +62,24 @@ def collect(src, assets_dir=None):
             full = os.path.join(root, fn)
             rel = os.path.relpath(full, src).replace(os.sep, "/")
             out.append((rel, full))
-    if assets_dir:
-        # Packed under assets/ so AssetManager can reach it; read straight from the source tree
-        # rather than copying ~270 MiB into the staging directory first.
-        for root, dirs, files in os.walk(assets_dir):
+    for tree, prefix in ((assets_dir, "assets/"), (lib_dir, "lib/")):
+        if not tree:
+            continue
+        # Read straight from the source tree rather than copying hundreds of MiB into the staging
+        # directory first. lib/ matters for more than tidiness: the installer extracts those into the
+        # app's native library directory, the only place an app may execute from.
+        for root, dirs, files in os.walk(tree):
             dirs.sort()
             for fn in files:
                 full = os.path.join(root, fn)
-                rel = os.path.relpath(full, assets_dir).replace(os.sep, "/")
-                out.append(("assets/" + rel, full))
+                rel = os.path.relpath(full, tree).replace(os.sep, "/")
+                out.append((prefix + rel, full))
     out.sort(key=lambda e: e[0])
     return out
 
 
-def build(src, dest, assets_dir=None):
-    files = collect(src, assets_dir)
+def build(src, dest, assets_dir=None, lib_dir=None):
+    files = collect(src, assets_dir, lib_dir)
     if not files:
         raise SystemExit("no files under " + src)
 
@@ -150,10 +153,11 @@ def build(src, dest, assets_dir=None):
 
 
 def main():
-    if len(sys.argv) not in (3, 4):
+    if len(sys.argv) not in (3, 4, 5):
         raise SystemExit(__doc__)
-    assets_dir = sys.argv[3] if len(sys.argv) == 4 else None
-    count, stored, aligned, deflated, size = build(sys.argv[1], sys.argv[2], assets_dir)
+    assets_dir = sys.argv[3] if len(sys.argv) >= 4 else None
+    lib_dir = sys.argv[4] if len(sys.argv) == 5 else None
+    count, stored, aligned, deflated, size = build(sys.argv[1], sys.argv[2], assets_dir, lib_dir)
     print("packed %d entries (%d stored %d deflated, %d aligned to %d) -> %.1f MiB"
           % (count, stored, deflated, aligned, ALIGN, size / 1048576.0))
 

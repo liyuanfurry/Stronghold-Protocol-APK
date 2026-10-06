@@ -17,7 +17,7 @@ OUT="$HERE/out"
 MIN_SDK="${MIN_SDK:-21}"
 TARGET_SDK="${TARGET_SDK:-34}"
 VERSION_CODE=1
-VERSION_NAME="1.6"
+VERSION_NAME="1.7"
 
 KEYSTORE="$HERE/keys/stronghold.keystore"
 KS_PASS="stronghold"
@@ -59,17 +59,20 @@ cp "$OUT/dex/classes.dex" "$OUT/contents/classes.dex"
 echo "==> 5/6 打包并对齐 (make_apk.py)"
 # android/assets/ is the pre-installed media payload; make_apk.py packs it under assets/ without
 # copying it into the staging directory first.
-if [ -d "$SRC/assets/node" ]; then
-    echo "    生成本机服务器载荷清单"
-    python3 "$HERE/make_payload_list.py" "$SRC/assets"
-fi
-if [ -f "$SRC/assets/baseline/index.txt" ]; then
-    echo "    素材包: $(find "$SRC/assets/mirror" -type f | wc -l) 个文件, $(du -sh "$SRC/assets" | cut -f1)"
-    python3 "$HERE/make_apk.py" "$OUT/contents" "$OUT/unsigned.apk" "$SRC/assets"
+ASSETS_ARG=""
+[ -d "$SRC/assets" ] && ASSETS_ARG="$SRC/assets"
+LIB_ARG=""
+[ -d "$SRC/lib" ] && LIB_ARG="$SRC/lib"
+
+if [ -n "$LIB_ARG" ]; then
+    echo "    node 运行时: $(ls "$SRC/lib/arm64-v8a" | wc -l) 个 lib*.so, $(du -sh "$SRC/lib" | cut -f1)"
 else
-    echo "    ! android/assets 不存在，将生成不含素材的小包" >&2
-    python3 "$HERE/make_apk.py" "$OUT/contents" "$OUT/unsigned.apk"
+    echo "    ! android/lib 不存在，本机服务器将在运行时不可用" >&2
 fi
+if [ -n "$ASSETS_ARG" ]; then
+    echo "    素材包: $(find "$SRC/assets/mirror" -type f 2>/dev/null | wc -l) 个文件, $(du -sh "$SRC/assets" | cut -f1)"
+fi
+python3 "$HERE/make_apk.py" "$OUT/contents" "$OUT/unsigned.apk" $ASSETS_ARG $LIB_ARG
 
 echo "==> 6/6 签名 (apksigner)"
 mkdir -p "$(dirname "$KEYSTORE")"

@@ -67,13 +67,19 @@ Android APK，解决三件事：
 
 ### 手机自己当服务器
 
-APK 内嵌了一套 Bionic Node 运行时：
+APK 内嵌了一套 Bionic Node 运行时。它在 APK 里的布局是**刻意**的：
 
 ```
-assets/node/   node 二进制 + 传递闭包解出的 9 个 .so（含 31.6 MB 的 libicudata）  ≈ 89 MB
-assets/gsrv/   上游服务端代码（server/ shared/ data/ public/）+ ws 模块        ≈ 8.9 MB
-assets/payload.txt   218 条解包清单（路径 + 目标权限）
+lib/arm64-v8a/   libnode.so + 传递闭包解出的 9 个库（含 31.6 MB 的 libicudata）   ≈ 89 MB
+assets/gsrv/     上游服务端代码（server/ shared/ data/ public/）+ ws 模块        ≈ 9 MB
+assets/payload.txt   208 条解包清单
 ```
+
+Node 和它的库**不是**放在 `assets/` 里解包后再执行的，而是作为 `lib/*.so` 交给**安装器**放进
+`nativeLibraryDir`。原因是 Android 不允许应用 `execve()` 自己**数据目录**里的文件——设备上实测：
+文件模式已经是 0700、`canExecute()` 为 true，`execve` 仍然返回 EACCES，而同一台设备上另一个应用
+用完全相同的 SELinux 标签执行同样的文件却没问题。原生库目录是平台唯一当作代码看待的位置，
+只有放那里才稳定。附带两个好处：不需要运行时 chmod，而且运行时解包量从 97 MB 降到 9 MB。
 
 首次启动把它们解到应用私有目录（约 97 MB），然后拉起：
 
@@ -88,9 +94,19 @@ node <filesDir>/localsrv/gsrv/server/index.js     HOST=0.0.0.0  PORT=3000
 `/vendor/*` 拦下来从本地读，所以主机不必为它们发送 272 MiB。代价是**纯浏览器客户端**加入时素材会 404
 （页面、JS、数据都正常，只是没有美术音频）。
 
-### 两个踩过的坑
+### 四个踩过的坑
 
-**1. `File.setExecutable()` 会把文件 chmod 成 `0111`，而动态链接的 ELF 只有执行位是跑不起来的。**
+**1. Android 禁止应用执行自己数据目录里的文件。** 不是文件权限问题：设备上实测模式已是 0700、
+`canExecute()` 为 true，`execve` 仍返回 EACCES。解决办法是把可执行文件放进 `nativeLibraryDir`
+（作为 `lib/*.so` 随 APK 分发，由安装器解出来），那里是平台唯一当作代码的位置。
+
+**2. 包管理器只提取 `lib/<abi>/` 下以 `.so` 结尾的文件，而链接器按精确 soname 查找。**
+所以 `libcrypto.so.3` / `libicudata.so.78` 这类名字两头不讨好，必须改名成 `libcrypto.so` 之类。
+只改文件名不够，还要把 ELF 里的 **`DT_NEEDED`、`DT_SONAME` 和 `.gnu.version_r` 的 verneed 三处**
+一起改——只改 `DT_NEEDED` 的话，设备会报
+`cannot find "libcrypto.so" from verneed[0] in DT_NEEDED list`。
+
+**3. `File.setExecutable()` 会把文件 chmod 成 `0111`，而动态链接的 ELF 只有执行位跑不起来。**
 在设备上实测的模式表：
 
 ```
@@ -98,11 +114,10 @@ mode 100 / 111 / 644  →  Permission denied (execve error 13)
 mode 500 / 700 / 755  →  能跑
 ```
 
-linker 必须能**读**这个二进制。所以 `makeExecutable()` 用 `Os.chmod(path, 0700)` 明确设定，判定标准是
-「可读 **且** 可执行」，再叠一层 `/system/bin/chmod 700` 兜底。
+linker 必须能**读**这个二进制。（现在这条路已经绕开了——模式由安装器决定，不再运行时 chmod。）
 
-**2. Termux 的 Node 把 `RUNPATH` 写死成 `/data/data/com.termux/files/usr/lib`（不存在）。**
-拉起子进程时用 `LD_LIBRARY_PATH` 指向解出来的 `node/lib` 覆盖它，`TMPDIR`/`HOME` 同理；
+**4. Termux 的 Node 把 `RUNPATH` 写死成 `/data/data/com.termux/files/usr/lib`（不存在）。**
+拉起子进程时用 `LD_LIBRARY_PATH` 指向原生库目录覆盖它，`TMPDIR`/`HOME` 同理；
 另外必须清掉 `LD_PRELOAD`，否则继承来的 termux-exec 会在 Node 启动前就把它搞死。
 
 ## 仓库里有什么

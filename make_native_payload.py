@@ -1,23 +1,37 @@
 #!/usr/bin/env python3
-"""Assembles android/assets/{node,gsrv} — what the on-phone game server needs to run.
+"""Assembles the on-phone game server payload: android/lib/arm64-v8a/ + android/assets/gsrv/.
 
-Nothing under android/assets/ is committed. For `node/` that is because it is a pile of Termux binaries;
-for `gsrv/` because it is upstream GPL source that belongs in the upstream repository rather than
-vendored here. Both are rebuilt by this script:
+    lib/arm64-v8a/   Node 24 plus every shared library it needs, all named lib*.so
+    assets/gsrv/     upstream server code at a checkout, plus the `ws` module from npm
 
-    node/   Bionic Node 24 + the shared libraries it links against, straight out of Termux .debs
-    gsrv/   upstream server code at a tag, plus the `ws` module from npm
+Nothing under android/lib or android/assets is committed: the first is a pile of Termux binaries, the
+second is upstream GPL source that belongs in the upstream repository rather than vendored here.
 
-The needed SONAMEs are read out of the Node binary's own DT_NEEDED, so bumping the Node version does
-not silently produce a payload with a missing library.
+**Why the libraries live in lib/ and not in assets/.** Android refuses to execve() a file in an app's
+home directory. Measured on-device: the file had mode 0700 and canExecute() was true, yet execve still
+returned EACCES -- while an identical file with an identical SELinux label executed fine for a
+different app on the same device. The native library directory is the one place the platform always
+treats as code, so the executable goes there.
+
+Two consequences, both handled below:
+
+  * the installer only extracts entries under lib/<abi>/ whose names end in .so -- so every file is
+    renamed to an unversioned lib*.so;
+  * a linker resolves libraries by their exact soname -- so DT_NEEDED, DT_SONAME **and** the
+    .gnu.version_r verneed entries are all rewritten to match.
+
+Patching DT_NEEDED alone is not enough; the device reported
+  cannot find "libcrypto.so" from verneed[0] in DT_NEEDED list
+because the version-need table and the loaded library's own SONAME still carried the old name. New
+names are always shorter, so the rewrite happens in place inside .dynstr with NUL padding.
 
 Usage:
-  python3 make_native_payload.py <assets-dir> <upstream-checkout> [--tag <ref>]
-                                 [--mirror <termux-repo-url>] [--keep-debs <dir>]
+  python3 make_native_payload.py <android-dir> <upstream-checkout> [--mirror <termux-repo-url>]
+                                 [--keep-debs <dir>] [--node-only|--gsrv-only]
 """
 import io
-import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -27,47 +41,107 @@ import urllib.request
 
 PACKAGES = ["nodejs-lts", "libicu", "libc++", "openssl", "c-ares", "libsqlite", "zlib"]
 WS_VERSION = "8.22.0"
-# Copied into gsrv/. public/{assets,fonts} are deliberately absent: the app's own WebView serves those
-# out of the APK for every device running this client, so the host does not need to ship 272 MiB.
 GSRV_TREES = ["server", "shared", "data", "package.json"]
+# public/{assets,fonts} stay out on purpose: every device running this client serves those out of its
+# own APK, so the host never has to ship 272 MiB of artwork it would only ever 404 on.
 GSRV_PUBLIC = ["css", "js", "index.html"]
 
+DT_NEEDED, DT_SONAME = 1, 14
+SHT_DYNAMIC, SHT_GNU_VERNEED = 6, 0x6FFFFFFE
 
-# ---- tiny ELF reader: what does this binary need to be linked against? ---------------------------
+UA = "make_native_payload/2.0"
 
-def needed_sonames(path):
-    with open(path, "rb") as fh:
-        data = fh.read()
-    if data[:4] != b"\x7fELF" or data[4] != 2:            # 64-bit only
-        raise SystemExit("%s is not a 64-bit ELF" % path)
+
+def _sections(data):
     e_shoff, = struct.unpack_from("<Q", data, 0x28)
-    e_shentsize, e_shnum, e_shstrndx = struct.unpack_from("<HHH", data, 0x3A)
-    sections = []
+    e_shentsize, e_shnum, _ = struct.unpack_from("<HHH", data, 0x3A)
+    out = []
     for i in range(e_shnum):
         off = e_shoff + i * e_shentsize
-        name, stype, _flags, _addr, offset, size, link, _info, _align, entsize = \
+        _n, stype, _f, _a, offset, size, link, _i, _al, _ent = \
             struct.unpack_from("<IIQQQQIIQQ", data, off)
-        sections.append(dict(name=name, type=stype, offset=offset, size=size,
-                             link=link, entsize=entsize))
-    dyn = next((s for s in sections if s["type"] == 6), None)      # SHT_DYNAMIC
+        out.append(dict(type=stype, offset=offset, size=size, link=link))
+    return out
+
+
+def _dynamic(data):
+    secs = _sections(data)
+    dyn = next((s for s in secs if s["type"] == SHT_DYNAMIC), None)
+    if dyn is None:
+        return None, None, secs
+    return dyn, secs[dyn["link"]], secs
+
+
+def sonames(path):
+    """The DT_NEEDED names of an ELF."""
+    with open(path, "rb") as fh:
+        data = bytearray(fh.read())
+    dyn, strtab, _ = _dynamic(data)
     if dyn is None:
         return []
-    strtab = sections[dyn["link"]]
     strings = data[strtab["offset"]:strtab["offset"] + strtab["size"]]
     out = []
     for i in range(dyn["size"] // 16):
         tag, val = struct.unpack_from("<qQ", data, dyn["offset"] + i * 16)
         if tag == 0:
             break
-        if tag == 1:                                                # DT_NEEDED
-            end = strings.index(b"\0", val)
-            out.append(strings[val:end].decode())
+        if tag == DT_NEEDED:
+            out.append(strings[val:strings.index(b"\0", val)].decode())
     return out
 
 
-# ---- .deb extraction without dpkg ----------------------------------------------------------------
+def unversioned(soname):
+    """libcrypto.so.3 -> libcrypto.so ; libcares.so is already fine."""
+    return re.sub(r"\.so(\.\d+)+$", ".so", soname)
 
-def ar_members(blob):
+
+def rewrite_sonames(path):
+    """Rewrites DT_NEEDED / DT_SONAME / verneed in place. Returns [(old, new), ...]."""
+    with open(path, "rb") as fh:
+        data = bytearray(fh.read())
+    if data[:4] != b"\x7fELF" or data[4] != 2:
+        return []
+    dyn, strtab, secs = _dynamic(data)
+    if dyn is None:
+        return []
+
+    offsets = []
+    for i in range(dyn["size"] // 16):
+        tag, val = struct.unpack_from("<qQ", data, dyn["offset"] + i * 16)
+        if tag == 0:
+            break
+        if tag in (DT_NEEDED, DT_SONAME):
+            offsets.append(val)
+    ver = next((s for s in secs if s["type"] == SHT_GNU_VERNEED), None)
+    if ver is not None:
+        off, end = ver["offset"], ver["offset"] + ver["size"]
+        while off < end:
+            _v, _c, vn_file, _a, vn_next = struct.unpack_from("<HHIII", data, off)
+            if vn_file:
+                offsets.append(vn_file)
+            if vn_next == 0:
+                break
+            off += vn_next
+
+    base = strtab["offset"]
+    changes = []
+    for off in sorted(set(offsets)):
+        end = data.index(b"\0", base + off)
+        old = data[base + off:end].decode("utf-8", "replace")
+        new = unversioned(old)
+        if new == old:
+            continue
+        if len(new) > len(old):
+            raise SystemExit("%s: %s -> %s would grow the string" % (path, old, new))
+        data[base + off:base + off + len(old)] = new.encode() + b"\0" * (len(old) - len(new))
+        changes.append((old, new))
+    if changes:
+        with open(path, "wb") as fh:
+            fh.write(data)
+    return changes
+
+
+def _ar_members(blob):
     if blob[:8] != b"!<arch>\n":
         raise SystemExit("not an ar archive")
     pos, out = 8, {}
@@ -81,35 +155,32 @@ def ar_members(blob):
     return out
 
 
-def deb_data_tar(path):
+def _deb_data(path):
     with open(path, "rb") as fh:
-        members = ar_members(fh.read())
-    for name in ("data.tar.xz", "data.tar.gz", "data.tar.zst", "data.tar"):
+        members = _ar_members(fh.read())
+    for name, mode in (("data.tar.xz", "r:xz"), ("data.tar.gz", "r:gz"), ("data.tar", "r:")):
         if name in members:
-            if name.endswith(".zst"):
-                raise SystemExit("data.tar.zst unsupported; install zstd or pick another mirror")
-            return tarfile.open(fileobj=io.BytesIO(members[name]), mode="r:*")
-    raise SystemExit("no data.tar in %s (%s)" % (path, list(members)))
-
-
-# The Termux CDN answers 403 to a request with no User-Agent, so every fetch carries one.
-UA = "make_native_payload/1.0 (+https://github.com)"
+            return tarfile.open(fileobj=io.BytesIO(members[name]), mode=mode)
+    raise SystemExit("no usable data.tar in %s" % path)
 
 
 def fetch(url, dest):
+    """Download once; the Termux CDN answers 403 to a request with no User-Agent."""
     if os.path.isfile(dest) and os.path.getsize(dest) > 0:
         return dest
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    parent = os.path.dirname(dest)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     print("  GET %s" % url)
     req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=120) as r, open(dest, "wb") as fh:
+    with urllib.request.urlopen(req, timeout=180) as r, open(dest, "wb") as fh:
         shutil.copyfileobj(r, fh, 1 << 20)
     return dest
 
 
-def package_filenames(mirror):
-    index = fetch(mirror.rstrip("/") + "/dists/stable/main/binary-aarch64/Packages",
-                  ".native-payload/Packages")
+def package_filenames(mirror, work):
+    index = os.path.join(work, "Packages")
+    fetch(mirror.rstrip("/") + "/dists/stable/main/binary-aarch64/Packages", index)
     want, cur = {}, None
     with open(index, encoding="utf-8", errors="replace") as fh:
         for line in fh:
@@ -123,124 +194,133 @@ def package_filenames(mirror):
     return want
 
 
-def main():
-    if len(sys.argv) < 3:
-        raise SystemExit(__doc__)
-    assets, upstream = sys.argv[1], sys.argv[2]
-    mirror = "https://packages.termux.dev/apt/termux-main"
-    debdir = ".native-payload"
-    args = sys.argv[3:]
-    for i, a in enumerate(args):
-        if a == "--mirror":
-            mirror = args[i + 1]
-        elif a == "--keep-debs":
-            debdir = args[i + 1]
-    os.makedirs(debdir, exist_ok=True)
+def node_payload(android_dir, mirror, work):
+    lib_out = os.path.join(android_dir, "lib", "arm64-v8a")
+    shutil.rmtree(lib_out, ignore_errors=True)
+    os.makedirs(lib_out, exist_ok=True)
 
-    node_out = os.path.join(assets, "node")
-    gsrv_out = os.path.join(assets, "gsrv")
-    shutil.rmtree(node_out, ignore_errors=True)
-    os.makedirs(os.path.join(node_out, "bin"), exist_ok=True)
-    os.makedirs(os.path.join(node_out, "lib"), exist_ok=True)
-
-    # ---- 1. Termux packages ----------------------------------------------------------------------
-    print("Termux packages:")
-    filenames = package_filenames(mirror)
+    filenames = package_filenames(mirror, work)
     roots = []
+    print("Termux packages:")
     for pkg in PACKAGES:
         deb = fetch(mirror.rstrip("/") + "/" + filenames[pkg],
-                    os.path.join(debdir, os.path.basename(filenames[pkg])))
-        staging = os.path.join(debdir, "x", pkg)
+                    os.path.join(work, os.path.basename(filenames[pkg])))
+        staging = os.path.join(work, "x", pkg)
         shutil.rmtree(staging, ignore_errors=True)
-        deb_data_tar(deb).extractall(staging)
+        _deb_data(deb).extractall(staging)
         root = os.path.join(staging, "data/data/com.termux/files/usr")
         roots.append(root if os.path.isdir(root) else staging)
         print("  %-12s ok" % pkg)
 
-    def find(rel):
+    def locate(rel):
         for r in roots:
             p = os.path.join(r, rel)
             if os.path.exists(p):
                 return os.path.realpath(p)
         return None
 
-    node_src = find("bin/node")
+    node_src = locate("bin/node")
     if not node_src:
         raise SystemExit("no bin/node in any package")
-    shutil.copyfile(node_src, os.path.join(node_out, "bin/node"))
-    os.chmod(os.path.join(node_out, "bin/node"), 0o755)
 
-    # Transitive closure, not just the binary's own list: libicuuc.so needs libicudata.so, and node
-    # itself never mentions it — copying only the direct dependencies ships a payload that cannot start.
-    SYSTEM = ("libc.", "libm.", "libdl.", "liblog.", "libandroid.")
-    libdirs = [os.path.join(r, "lib") for r in roots]
-
-    def locate(so):
-        for d in libdirs:
-            cand = os.path.join(d, so)
-            if os.path.exists(cand):
-                return os.path.realpath(cand)
-        return None
-
-    resolved = {}
-    queue = list(needed_sonames(node_src))
+    # Transitive closure: libicuuc needs libicudata, which node itself never names. Shipping only the
+    # direct dependencies produces a node that cannot start.
+    SYSTEM = ("libc.", "libm.", "libdl.", "liblog.")
+    resolved, queue = {}, list(sonames(node_src))
     while queue:
         so = queue.pop(0)
         if so in resolved or so.startswith(SYSTEM):
             continue
-        src = locate(so)
+        src = locate("lib/" + so)
         if src is None:
-            raise SystemExit("cannot resolve %s — is the mirror complete?" % so)
+            raise SystemExit("cannot resolve %s -- is the mirror complete?" % so)
         resolved[so] = src
-        for dep in needed_sonames(src):
+        for dep in sonames(src):
             if dep not in resolved and dep not in queue:
                 queue.append(dep)
 
     print("node needs %d libraries (transitively):" % len(resolved))
     for so in sorted(resolved):
-        shutil.copyfile(resolved[so], os.path.join(node_out, "lib", so))
-        print("  %-22s %.1f MB" % (so, os.path.getsize(resolved[so]) / 1048576.0))
+        target = os.path.join(lib_out, unversioned(so))
+        shutil.copyfile(resolved[so], target)
+        print("  %-22s -> %-20s %.1f MB" % (so, os.path.basename(target),
+                                            os.path.getsize(target) / 1048576.0))
 
-    # ---- 2. upstream server code -----------------------------------------------------------------
-    print("upstream server code from %s:" % upstream)
+    node_target = os.path.join(lib_out, "libnode.so")
+    shutil.copyfile(node_src, node_target)
+
+    print("rewriting sonames (DT_NEEDED / DT_SONAME / verneed):")
+    for name in sorted(os.listdir(lib_out)):
+        for old, new in rewrite_sonames(os.path.join(lib_out, name)):
+            print("  %-18s %s -> %s" % (name, old, new))
+    return lib_out
+
+
+def gsrv_payload(android_dir, upstream, work):
+    out = os.path.join(android_dir, "assets", "gsrv")
+    shutil.rmtree(out, ignore_errors=True)
     subprocess.check_call(["git", "-C", upstream, "rev-parse", "--short", "HEAD"],
                           stdout=subprocess.DEVNULL)
-    shutil.rmtree(gsrv_out, ignore_errors=True)
+    commit = subprocess.check_output(["git", "-C", upstream, "rev-parse", "--short", "HEAD"],
+                                     text=True).strip()
+    print("upstream server code at %s:" % commit)
     for tree in GSRV_TREES:
-        src = os.path.join(upstream, tree)
-        dst = os.path.join(gsrv_out, tree)
+        src, dst = os.path.join(upstream, tree), os.path.join(out, tree)
         if not os.path.exists(src):
             raise SystemExit("missing %s in %s" % (tree, upstream))
         if os.path.isdir(src):
             shutil.copytree(src, dst)
         else:
             shutil.copyfile(src, dst)
-    os.makedirs(os.path.join(gsrv_out, "public"), exist_ok=True)
+    os.makedirs(os.path.join(out, "public"), exist_ok=True)
     for item in GSRV_PUBLIC:
         src = os.path.join(upstream, "public", item)
-        dst = os.path.join(gsrv_out, "public", item)
+        dst = os.path.join(out, "public", item)
         if os.path.isdir(src):
             shutil.copytree(src, dst)
         else:
             shutil.copyfile(src, dst)
     print("  server/ shared/ data/ public/{css,js,index.html}")
 
-    # ---- 3. ws from npm --------------------------------------------------------------------------
     tgz = fetch("https://registry.npmjs.org/ws/-/ws-%s.tgz" % WS_VERSION,
-                os.path.join(debdir, "ws-%s.tgz" % WS_VERSION))
-    ws_dir = os.path.join(gsrv_out, "node_modules", "ws")
+                os.path.join(work, "ws-%s.tgz" % WS_VERSION))
+    ws_dir = os.path.join(out, "node_modules", "ws")
     shutil.rmtree(ws_dir, ignore_errors=True)
+    tmp = os.path.join(work, "wsx")
+    shutil.rmtree(tmp, ignore_errors=True)
     with tarfile.open(tgz, "r:gz") as tf:
-        tmp = os.path.join(debdir, "wsx")
-        shutil.rmtree(tmp, ignore_errors=True)
         tf.extractall(tmp)
     shutil.move(os.path.join(tmp, "package"), ws_dir)
     print("  node_modules/ws %s" % WS_VERSION)
+    return out
 
-    # ---- 4. the unpack list the app walks --------------------------------------------------------
+
+def main():
+    if len(sys.argv) < 3:
+        raise SystemExit(__doc__)
+    android_dir, upstream = sys.argv[1], sys.argv[2]
+    mirror = "https://packages.termux.dev/apt/termux-main"
+    work = ".native-payload"
+    only = None
+    args = sys.argv[3:]
+    for i, a in enumerate(args):
+        if a == "--mirror":
+            mirror = args[i + 1]
+        elif a == "--keep-debs":
+            work = args[i + 1]
+        elif a in ("--node-only", "--gsrv-only"):
+            only = a
+    os.makedirs(work, exist_ok=True)
+
+    if only != "--gsrv-only":
+        print("-> %s" % node_payload(android_dir, mirror, work))
+    if only != "--node-only":
+        print("-> %s" % gsrv_payload(android_dir, upstream, work))
+
     subprocess.check_call([sys.executable,
                            os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                        "make_payload_list.py"), assets])
+                                        "make_payload_list.py"),
+                           os.path.join(android_dir, "assets")])
     print("\ndone. build the APK with ./build.sh")
     return 0
 
