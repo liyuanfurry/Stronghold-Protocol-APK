@@ -55,16 +55,6 @@ public class GameWebViewClient extends WebViewClient {
             String path = url.getPath();
             if (path == null) return null;
 
-            // data/local-assets.json is the optional art extracted from a local game client. This client
-            // never ships it, and the game asks for it at boot and again when a match mounts, each time
-            // inside a multi-second timeout gate. Answering from the overlay (if a sync ever put one there)
-            // or with an immediate 404 keeps those gates from waiting on a round trip that can only fail.
-            if (path.equals("/data/local-assets.json")) {
-                AssetCache.Source local = cache.open(path);
-                if (local != null) return respond(local, "application/json");
-                return notFound();
-            }
-
             if (path.startsWith(LOCAL_FONT_PATH)) {
                 return respond(cache.openBundled("localfonts/" + path.substring(LOCAL_FONT_PATH.length())),
                     mimeOf(path));
@@ -106,20 +96,6 @@ public class GameWebViewClient extends WebViewClient {
             if (css != null) return respond(css, "text/css");
         }
         return emptyCss();
-    }
-
-    private static WebResourceResponse notFound() {
-        try {
-            WebResourceResponse r = new WebResourceResponse("application/json", "utf-8",
-                new ByteArrayInputStream("{}".getBytes("UTF-8")));
-            r.setStatusCodeAndReasonPhrase(404, "Not Found");
-            Map<String, String> headers = new HashMap<String, String>();
-            headers.put("Cache-Control", "public, max-age=86400");
-            r.setResponseHeaders(headers);
-            return r;
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     private static WebResourceResponse emptyCss() {

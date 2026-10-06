@@ -17,6 +17,7 @@ public final class Prefs {
     private static final String K_LAST_SYNC = "lastSyncAt";
     private static final String K_MANIFEST_HASH = "manifestHash";
     private static final String K_ACTIVE_GSRV = "activeGsrv";
+    private static final String K_CACHE_BUST = "cacheBust";
 
     private Prefs() {}
 
@@ -65,6 +66,21 @@ public final class Prefs {
 
     public static void setActiveGsrv(Context c, String v) {
         sp(c).edit().putString(K_ACTIVE_GSRV, v == null ? "" : v).apply();
+    }
+
+    /**
+     * One-shot WebView cache invalidation marker.
+     *
+     * <p>A bad release cached {@code /data/local-assets.json} as a 404 for a day. That entry would keep
+     * hiding the server's copy of the optional local-client art manifest even after the interception was
+     * removed, so the cache is dropped exactly once per bump of this number.
+     */
+    public static int cacheBust(Context c) {
+        return sp(c).getInt(K_CACHE_BUST, 0);
+    }
+
+    public static void setCacheBust(Context c, int v) {
+        sp(c).edit().putInt(K_CACHE_BUST, v).apply();
     }
 
     public static String manifestHash(Context c) {

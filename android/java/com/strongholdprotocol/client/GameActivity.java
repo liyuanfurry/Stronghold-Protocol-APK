@@ -33,6 +33,9 @@ public class GameActivity extends Activity {
     public static final String EXTRA_SERVER = "server";
     private static final String TAG = "GameActivity";
 
+    /** Bump to drop the WebView cache once on upgrade. See the call site in onCreate. */
+    private static final int CACHE_BUST = 1;
+
     private FrameLayout root;
     private WebView web;
     private ProgressBar bar;
@@ -135,6 +138,20 @@ public class GameActivity extends Activity {
         web.setLongClickable(false);
         web.setHapticFeedbackEnabled(false);
         try { CookieManager.getInstance().setAcceptCookie(true); } catch (Throwable ignored) { }
+
+        // v2.7 wrongly cached /data/local-assets.json as a 404 for a day, which hides the server's copy of
+        // the optional local-client art manifest (the official board art and some enemy models come from
+        // it). Dropping the cache once on upgrade is the only way to evict that entry; the match data is
+        // refetched by the warm-up below, so the cost is a single slower first match after upgrading.
+        if (Prefs.cacheBust(this) < CACHE_BUST) {
+            try {
+                web.clearCache(true);
+                Log.i(TAG, "cleared the WebView cache (one-shot, cache-bust " + CACHE_BUST + ")");
+            } catch (Throwable t) {
+                Log.w(TAG, "cache clear failed", t);
+            }
+            Prefs.setCacheBust(this, CACHE_BUST);
+        }
 
         final AssetCache cache = App.cacheOf(this);
         web.setWebViewClient(new GameWebViewClient(cache) {
