@@ -263,7 +263,13 @@ def gsrv_payload(android_dir, upstream, work):
                           stdout=subprocess.DEVNULL)
     commit = subprocess.check_output(["git", "-C", upstream, "rev-parse", "--short", "HEAD"],
                                      text=True).strip()
-    print("upstream server code at %s:" % commit)
+    # 记下这份代码是哪个上游 tag：App 用它标注「手机现有」，并和 GitHub 上的版本列表对比。
+    try:
+        tag = subprocess.check_output(["git", "-C", upstream, "describe", "--tags", "--exact-match"],
+                                      text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        tag = commit
+    print("upstream server code at %s (tag %s):" % (commit, tag))
     for tree in GSRV_TREES:
         src, dst = os.path.join(upstream, tree), os.path.join(out, tree)
         if not os.path.exists(src):
@@ -292,6 +298,9 @@ def gsrv_payload(android_dir, upstream, work):
         tf.extractall(tmp)
     shutil.move(os.path.join(tmp, "package"), ws_dir)
     print("  node_modules/ws %s" % WS_VERSION)
+    with open(os.path.join(out, ".version"), "w", encoding="utf-8") as fh:
+        fh.write(tag + "\n")
+    print("  .version %s" % tag)
     return out
 
 

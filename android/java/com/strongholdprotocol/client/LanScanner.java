@@ -185,6 +185,64 @@ public final class LanScanner {
         return out;
     }
 
+    /**
+     * One-shot reachability + identity check for an address the player typed.
+     *
+     * <p>Distinguishes the failure modes on purpose: "no such host", "connection refused" and "timed
+     * out" mean three different mistakes (typo, port closed, host unreachable), and a single generic
+     * "connect failed" would leave the player guessing which one they made.
+     *
+     * @return {ok, detail} — detail is a readable line in both cases
+     */
+    public static String[] checkServer(String baseUrl) {
+        String base = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(base + "/healthz");
+            conn = (HttpURLConnection) url.openConnection();
+            if (conn instanceof HttpsURLConnection) {
+                SSLContext ctx = trustAll();
+                if (ctx == null) return new String[]{"0", "HTTPS 初始化失败"};
+                ((HttpsURLConnection) conn).setSSLSocketFactory(ctx.getSocketFactory());
+                ((HttpsURLConnection) conn).setHostnameVerifier(new javax.net.ssl.HostnameVerifier() {
+                    @Override public boolean verify(String host, javax.net.ssl.SSLSession session) { return true; }
+                });
+            }
+            conn.setConnectTimeout(4000);
+            conn.setReadTimeout(6000);
+            conn.setRequestProperty("Accept-Encoding", "identity");
+            conn.setRequestProperty("User-Agent", "StrongholdProtocol-Android check");
+
+            int code = conn.getResponseCode();
+            if (code != 200) return new String[]{"0", "服务器对 /healthz 返回 HTTP " + code};
+
+            InputStream in = conn.getInputStream();
+            ByteArrayOutputStream bos = new ByteArrayOutputStream(512);
+            byte[] buf = new byte[1024];
+            int n;
+            while ((n = in.read(buf)) > 0 && bos.size() < MAX_BODY) bos.write(buf, 0, n);
+            in.close();
+
+            JSONObject o = new JSONObject(new String(bos.toByteArray(), "UTF-8"));
+            if (!o.optBoolean("ok")) return new String[]{"0", "/healthz 存在，但返回的不是这个服务端"};
+            String app = o.optString("app", "?");
+            return new String[]{"1", "服务端 " + app + " · 协议 " + o.optInt("version")
+                + " · " + o.optInt("humans") + " 人在线 · " + o.optInt("rooms") + " 个房间"};
+        } catch (java.net.UnknownHostException e) {
+            return new String[]{"0", "域名解析不了（地址拼错，或者这台设备解析不到）"};
+        } catch (java.net.ConnectException e) {
+            return new String[]{"0", "拒绝连接（端口没开，或者服务端没在跑）"};
+        } catch (java.net.SocketTimeoutException e) {
+            return new String[]{"0", "连接超时（4 秒无响应：地址通但服务端没应答，或被网络挡住）"};
+        } catch (javax.net.ssl.SSLException e) {
+            return new String[]{"0", "TLS 握手失败（端口不是 HTTPS，或证书有问题）"};
+        } catch (Exception e) {
+            return new String[]{"0", e.getClass().getSimpleName() + "：" + e.getMessage()};
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
     /** @return the server, or null when nothing game-shaped answered */
     private static Found probe(String scheme, String ip, int port) {
         HttpURLConnection conn = null;

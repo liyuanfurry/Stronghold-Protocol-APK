@@ -89,6 +89,20 @@ public final class LocalServer {
     public File root() { return root; }
 
     /**
+     * The tree the server actually runs: a version pulled from upstream when the player picked one,
+     * otherwise the copy unpacked from the APK. Falls back silently if a chosen version has been
+     * deleted, so a bad choice can never leave the panel with nothing to start.
+     */
+    public File activeTree() {
+        String tag = Prefs.activeGsrv(app);
+        if (tag != null && !tag.isEmpty()) {
+            File d = new File(new File(root, "versions"), tag);
+            if (new File(d, "server/index.js").isFile()) return d;
+        }
+        return gsrvDir;
+    }
+
+    /**
      * Records a line in the same ring buffer the child's output goes to.
      *
      * <p>Deliberately not {@code Log.w} alone: this app is debugged by a player reading the in-app log
@@ -230,9 +244,10 @@ public final class LocalServer {
             + " 大小=" + nodeBin.length()
             + "\nlibs  " + libDir.getAbsolutePath()
             + " 可读=" + libDir.canRead()
-            + "\ngsrv  " + gsrvDir.getAbsolutePath()
-            + " 可读=" + gsrvDir.canRead()
-            + " 脚本=" + new File(gsrvDir, "server/index.js").isFile();
+            + "\ngsrv  " + activeTree().getAbsolutePath()
+            + " 可读=" + activeTree().canRead()
+            + " 脚本=" + new File(activeTree(), "server/index.js").isFile()
+            + " 版本=" + Upstream.activeVersion(app);
     }
 
     public void wipePayload() {
@@ -252,13 +267,14 @@ public final class LocalServer {
         exitCode = Integer.MIN_VALUE;
         ready = false;
 
+        final File tree = activeTree();
         List<String> cmd = new ArrayList<String>();
         cmd.add(nodeBin.getAbsolutePath());
-        cmd.add(new File(gsrvDir, "server/index.js").getAbsolutePath());
+        cmd.add(new File(tree, "server/index.js").getAbsolutePath());
         Log.i(TAG, "spawning " + cmd);
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.directory(gsrvDir);
+        pb.directory(tree);
         pb.redirectErrorStream(true);
         Map<String, String> env = pb.environment();
         env.remove("LD_PRELOAD");

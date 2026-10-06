@@ -20,6 +20,7 @@
             android:textStyle="bold" />
 
         <TextView
+            android:id="@+id/build_stamp"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
@@ -104,6 +105,21 @@
                 android:layout_weight="1"
                 android:text="开始游戏" />
         </LinearLayout>
+
+        <Button
+            android:id="@+id/bundle_import"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="从 GitHub 整合包补素材" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="上游不提供素材服务器，美术与音频只在 Release 整合包里（v0.1.4 约 431 MB）。这里直接把包里的素材取出来写进覆盖层，不需要任何自建服务器。"
+            android:textColor="@color/dim"
+            android:textSize="11sp" />
 
         <ProgressBar
             android:id="@+id/progress"
@@ -192,6 +208,61 @@
                 android:layout_weight="1"
                 android:text="查看服务端日志" />
         </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="上游版本（来自 GitHub）"
+            android:textColor="@color/dim"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/up_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:lineSpacingExtra="2dp"
+            android:text="未查询"
+            android:textColor="@color/text"
+            android:textSize="12sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/up_refresh"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="刷新版本列表" />
+
+            <Button
+                android:id="@+id/up_embedded"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:text="用回内置版本" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="直接取上游 sganggs/Stronghold-Protocol 的版本：源码包约 7 MB，切完本机服务器就跑那个版本。素材不变，仍用安装包自带的那份。"
+            android:textColor="@color/dim"
+            android:textSize="11sp" />
+
+        <LinearLayout
+            android:id="@+id/up_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:orientation="vertical" />
 
         <TextView
             android:layout_width="wrap_content"

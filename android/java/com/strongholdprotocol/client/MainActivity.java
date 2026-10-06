@@ -19,6 +19,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -34,11 +35,15 @@ public class MainActivity extends Activity implements AssetCache.Listener {
     private Button updateButton, playButton, checkButton, revertButton;
     private ProgressBar progress;
     private TextView status, builtinInfo, serverInfo, overlayInfo, footer;
+    private Button bundleButton;
     private TextView localIp, scanStatus;
     private Button scanButton;
     private LinearLayout scanResults;
     private TextView srvStatus;
     private Button srvToggle, srvUse, srvLog, srvCopy;
+    private TextView upStatus;
+    private Button upRefresh, upEmbedded;
+    private LinearLayout upList;
 
     private AssetCache cache;
     private LanScanner scanner;
@@ -60,6 +65,7 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         revertButton = (Button) findViewById(R.id.revert);
         progress = (ProgressBar) findViewById(R.id.progress);
         status = (TextView) findViewById(R.id.status);
+        bundleButton = (Button) findViewById(R.id.bundle_import);
         builtinInfo = (TextView) findViewById(R.id.version_builtin);
         serverInfo = (TextView) findViewById(R.id.version_server);
         overlayInfo = (TextView) findViewById(R.id.version_overlay);
@@ -75,6 +81,13 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         srvUse = (Button) findViewById(R.id.srv_use);
         srvLog = (Button) findViewById(R.id.srv_log);
         srvCopy = (Button) findViewById(R.id.srv_copy);
+        upStatus = (TextView) findViewById(R.id.up_status);
+        upRefresh = (Button) findViewById(R.id.up_refresh);
+        upEmbedded = (Button) findViewById(R.id.up_embedded);
+        upList = (LinearLayout) findViewById(R.id.up_list);
+
+        ((TextView) findViewById(R.id.build_stamp)).setText(
+            "STRONGHOLD PROTOCOL · 安卓客户端 v" + BuildStamp.VERSION + " · 构建于 " + BuildStamp.BUILT_AT);
 
         serverField.setText(Prefs.server(this));
         updateField.setText(Prefs.updateBase(this));
@@ -106,6 +119,15 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         srvCopy.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { copyLanUrl(); }
         });
+        upRefresh.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { refreshUpstream(); }
+        });
+        upEmbedded.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { useEmbeddedGsrv(); }
+        });
+        bundleButton.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { confirmBundleImport(); }
+        });
 
         refreshResourceInfo();
         warnIfWebViewTooOld();
@@ -123,6 +145,7 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         refreshResourceInfo();
         refreshLocalIp();
         refreshServerUi();
+        upStatus.setText("本机服务器当前运行：" + Upstream.activeVersion(this) + "\n点「刷新版本列表」向 GitHub 查询上游有哪些版本。");
         if (cache.isRunning()) {
             // The update keeps running while this screen is gone; re-attach and show where it is.
             cache.setListener(this);
@@ -179,11 +202,47 @@ public class MainActivity extends Activity implements AssetCache.Listener {
 
     // ---- actions ----------------------------------------------------------------------------------
 
+    /**
+     * Checks the address is actually alive before spending a game-screen launch on it.
+     *
+     * <p>A wrong port or a sleeping server used to land the player on a black WebView with no
+     * explanation. Now the failure names itself, and the player can still force their way in — the
+     * check is advice, not a gate.
+     */
     private void play() {
-        String server = requireServer();
+        final String server = requireServer();
         if (server == null) return;
         updateBaseFromUi();                       // remember the update address too
 
+        status.setText("正在测试 " + server + " 的连通性…");
+        playButton.setEnabled(false);
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final String[] r = LanScanner.checkServer(server);
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        playButton.setEnabled(true);
+                        if ("1".equals(r[0])) {
+                            status.setText("已连通 · " + r[1]);
+                            launchGame(server);
+                            return;
+                        }
+                        new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("连不上这台服务器")
+                            .setMessage(server + "\n\n" + r[1]
+                                + "\n\n地址拼错、端口没开、服务端没启动，都会是这样。仍然要进去吗？")
+                            .setNegativeButton("取消", null)
+                            .setPositiveButton("仍然进入", new DialogInterface.OnClickListener() {
+                                @Override public void onClick(DialogInterface d, int w) { launchGame(server); }
+                            })
+                            .show();
+                    }
+                });
+            }
+        }, "server-probe").start();
+    }
+
+    private void launchGame(String server) {
         Intent i = new Intent(this, GameActivity.class);
         i.putExtra(GameActivity.EXTRA_SERVER, server);
         startActivity(i);
@@ -256,6 +315,169 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         status.setText("已还原为内置资源");
         progress.setIndeterminate(false);
         progress.setProgress(0);
+    }
+
+    // ---- artwork from the upstream bundle ---------------------------------------------------------
+
+    private void confirmBundleImport() {
+        final String tag = Upstream.activeVersion(this);
+        new AlertDialog.Builder(this)
+            .setTitle("从 GitHub 整合包补素材")
+            .setMessage("下载上游 " + tag + " 的 Release 整合包，从中取出美术与音频写入本机覆盖层。\n\n"
+                + "· 整合包很大（v0.1.4 约 431 MB、v0.1.3 约 290 MB），建议连 Wi-Fi 或在代理下进行\n"
+                + "· 全程先在临时目录解包，成功后才一次性生效，中途失败不会留下新老素材混在一起的覆盖层\n"
+                + "· 现有素材不会被删除，只是被新素材盖住\n"
+                + "· 临时文件会在结束后自动清理\n\n"
+                + "前提是「上游版本 / 本机现有」那个版本有对应的整合包。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("开始下载", new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface d, int w) { runBundleImport(); }
+            })
+            .show();
+    }
+
+    private void runBundleImport() {
+        bundleButton.setEnabled(false);
+        progress.setVisibility(View.VISIBLE);
+        progress.setIndeterminate(true);
+        BundleImport.run(this, new BundleImport.Listener() {
+            @Override public void onProgress(final int percent, final String detail) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        status.setText(detail);
+                        if (percent >= 0) {
+                            progress.setIndeterminate(false);
+                            progress.setProgress(percent);
+                        } else {
+                            progress.setIndeterminate(true);
+                        }
+                    }
+                });
+            }
+
+            @Override public void onDone(final boolean ok, final String message) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        bundleButton.setEnabled(true);
+                        progress.setIndeterminate(false);
+                        progress.setProgress(ok ? 100 : 0);
+                        status.setText(message);
+                        refreshResourceInfo();
+                        Toast.makeText(MainActivity.this,
+                            ok ? "素材已从整合包补齐" : message, Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        });
+    }
+
+    // ---- upstream versions ------------------------------------------------------------------------
+
+    private void refreshUpstream() {
+        upRefresh.setEnabled(false);
+        upStatus.setText("正在向 GitHub 查询上游版本…");
+        Upstream.list(new Upstream.ListListener() {
+            @Override public void onList(final boolean ok, final List<Upstream.Release> list, final String error) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        upRefresh.setEnabled(true);
+                        if (!ok) {
+                            upStatus.setText("查询失败：" + error
+                                + "\nGitHub 在部分网络下不可达，开代理后重试。");
+                            return;
+                        }
+                        renderUpstream(list);
+                    }
+                });
+            }
+        });
+    }
+
+    private void renderUpstream(List<Upstream.Release> list) {
+        upList.removeAllViews();
+        final String active = Upstream.activeVersion(this);
+        String newest = list.isEmpty() ? null : list.get(0).tag;
+        upStatus.setText("共 " + list.size() + " 个上游版本；本机服务器当前运行 " + active);
+
+        for (final Upstream.Release r : list) {
+            StringBuilder label = new StringBuilder(r.tag);
+            if (!r.date.isEmpty()) label.append("　·　").append(r.date);
+            if (r.tag.equals(newest)) label.append("　【最新】");
+            if (r.tag.equals(active)) label.append("　【手机现有】");
+
+            Button row = new Button(this);
+            row.setText(label.toString());
+            row.setAllCaps(false);
+            row.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { confirmInstall(r); }
+            });
+            upList.addView(row);
+        }
+    }
+
+    private void confirmInstall(final Upstream.Release r) {
+        if (r.tag.equals(Upstream.activeVersion(this))) {
+            Toast.makeText(this, "本机服务器已经在跑 " + r.tag, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("切换到上游版本 " + r.tag)
+            .setMessage("从 GitHub 取该版本的源码包（约 7 MB），解包后本机服务器改跑这个版本。\n\n"
+                + "素材不会重新下载，仍用安装包自带的那份。若两个版本跨度较大导致素材对不上，"
+                + "可在「资源版本」里点「在线更新资源」补齐。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("下载并切换", new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface d, int w) { installUpstream(r.tag); }
+            })
+            .show();
+    }
+
+    private void installUpstream(final String tag) {
+        upRefresh.setEnabled(false);
+        upStatus.setText("正在下载 " + tag + " …");
+        Upstream.install(this, tag, new Upstream.InstallListener() {
+            @Override public void onProgress(final int done, final int total, final String detail) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() { upStatus.setText(tag + "：" + detail); }
+                });
+            }
+
+            @Override public void onDone(final boolean ok, final String message) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        upRefresh.setEnabled(true);
+                        upStatus.setText(message);
+                        if (!ok) { Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show(); return; }
+                        // A running server is still serving the old tree; stop it so the next start picks
+                        // up the new one — silently keeping the old version running would be a lie.
+                        LocalServer srv = App.localServerOf(MainActivity.this);
+                        if (srv.isRunning()) {
+                            LocalServerService.stop(MainActivity.this);
+                            srv.stop();
+                            upStatus.setText(message + "\n本机服务器已停止，重新点「启动」即用新版本。");
+                        }
+                        refreshServerUi();
+                        Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        });
+    }
+
+    private void useEmbeddedGsrv() {
+        String embedded = Upstream.embeddedVersion(this);
+        String active = Upstream.activeVersion(this);
+        if (embedded.equals(active)) {
+            Toast.makeText(this, "已经在用安装包内置的版本（" + embedded + "）", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        LocalServer srv = App.localServerOf(this);
+        if (srv.isRunning()) { LocalServerService.stop(this); srv.stop(); }
+        Prefs.setActiveGsrv(this, "");
+        refreshServerUi();
+        upStatus.setText("已切回安装包内置版本：" + embedded
+            + (srv.isRunning() ? "" : "\n重新点「启动本机服务器」生效。"));
+        Toast.makeText(this, "已切回内置版本 " + embedded, Toast.LENGTH_SHORT).show();
     }
 
     // ---- on-phone server --------------------------------------------------------------------------

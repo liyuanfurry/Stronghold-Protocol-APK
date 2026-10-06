@@ -16,6 +16,7 @@ public final class Prefs {
     private static final String K_UPDATE_BASE = "updateBase";
     private static final String K_LAST_SYNC = "lastSyncAt";
     private static final String K_MANIFEST_HASH = "manifestHash";
+    private static final String K_ACTIVE_GSRV = "activeGsrv";
 
     private Prefs() {}
 
@@ -52,6 +53,18 @@ public final class Prefs {
 
     public static void setLastSyncAt(Context c, long v) {
         sp(c).edit().putLong(K_LAST_SYNC, v).apply();
+    }
+
+    /**
+     * Upstream tag the on-phone server should run, e.g. {@code v0.1.4}. Empty means "the version this
+     * APK was built with".
+     */
+    public static String activeGsrv(Context c) {
+        return sp(c).getString(K_ACTIVE_GSRV, "");
+    }
+
+    public static void setActiveGsrv(Context c, String v) {
+        sp(c).edit().putString(K_ACTIVE_GSRV, v == null ? "" : v).apply();
     }
 
     public static String manifestHash(Context c) {
