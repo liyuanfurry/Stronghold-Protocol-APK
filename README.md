@@ -19,7 +19,7 @@ Android APK，解决三件事：
 - **可以在 App 里校对资源版本、按需增量在线更新**（只下变动的文件）；
 - **手机自己就能当服务器**：内嵌 Node 运行时，启动后在局域网里广播一个地址，同网段的设备直接连。
 
-产物：`StrongholdProtocol-1.6.apk` · 约 372 MiB · minSdk 21 / targetSdk 34 · v1+v2+v3 签名
+产物：`StrongholdProtocol-2.3.apk` · 约 315 MiB · minSdk 21 / targetSdk 34 · v1+v2+v3 签名
 
 > **这个客户端不含任何内置服务器地址，包名也不含任何域名。**
 > APK 是会流传的，把服务器地址写死在里面，等于给搭建者的机器挂一块公网招牌。
@@ -136,12 +136,19 @@ linker 必须能**读**这个二进制。（现在这条路已经绕开了——
 ## 安装
 
 ```
-/sdcard/Download/StrongholdProtocol-1.6.apk
+/sdcard/Download/StrongholdProtocol-2.3.apk
 ```
 
-自签名证书，系统提示"未知来源"是正常的；约 372 MiB，安装要等一会儿。
+自签名证书，系统提示"未知来源"是正常的；约 315 MiB，安装要等一会儿。
 
-- 要求 Android 5.0（API 21）以上。
+- **客户端**：要求 Android 5.0（API 21）以上。
+- **本机服务器**：要求 **Android 7.0（API 24）以上**。内嵌的 Node 运行时是按 API 24 构建的
+  （`libnode.so` 的 `.note.android.ident` 里写着 `API level 24`），并且**强引用**了
+  `pthread_barrier_init` / `pthread_barrier_wait` / `pthread_barrier_destroy`、`getgrnam_r`、
+  `getgrgid_r` 这些 **API 24 才引入**的 libc 符号。动态链接器在加载时就会解析全部强符号，
+  所以 Android 5–6 上 `execve` 会直接以 `cannot locate symbol` 失败——它不是权限问题，加任何
+  权限都没用。这类系统上 App 会把「启动本机服务器」置灰并说明原因，**连别人的服务器不受影响**。
+  （顺带一提：`memfd_create` 是 API 30 才有的，但它只是**弱引用**，缺失可以容忍，不构成门槛。）
 - **要求系统 WebView 为 Chrome/89 以上**（游戏用了 import maps）。版本过低时 App 会弹窗提示。
 
 ## 首次使用
@@ -149,7 +156,7 @@ linker 必须能**读**这个二进制。（现在这条路已经绕开了——
 1. **填服务器地址**（不预置任何地址），例如 `https://example.com:8443`，局域网填 `http://192.168.1.10:3000`。
    裸域名自动补 `https://`，**端口号要带上**。
 2. **开始游戏**。素材已在包里，不需要先下载。
-3. 想自己当主机：点「启动本机服务器」→ 首次解包约 97 MB → 状态显示
+3. 想自己当主机：点「启动本机服务器」→ 首次解包约 8.6 MB（需 Android 7.0+）→ 状态显示
    `运行中 · 本机 http://127.0.0.1:3000` 与 `同网段设备连：http://192.168.x.x:3000`。
 4. 出问题点「查看服务端日志」：进程退出码、`node` 的权限/大小、`LD_LIBRARY_PATH`、服务端自己的报错都在里面。
 

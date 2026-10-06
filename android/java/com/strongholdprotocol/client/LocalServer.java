@@ -1,6 +1,7 @@
 package com.strongholdprotocol.client;
 
 import android.content.Context;
+import android.os.Build;
 import android.content.pm.PackageInfo;
 import android.content.res.AssetManager;
 import android.util.Log;
@@ -59,6 +60,23 @@ public final class LocalServer {
 
     /** The runtime ships as lib/arm64-v8a/libnode.so, so the installer puts it here. */
     private static final String NODE_LIB = "libnode.so";
+
+    /**
+     * The API level the bundled Node payload is built for.
+     *
+     * <p>Not a guess: {@code libnode.so} carries {@code API level 24} in its {@code .note.android.ident}
+     * section (NDK r29), and it holds <b>strong</b> references to libc symbols that first appeared in
+     * API 24 — {@code pthread_barrier_init} / {@code pthread_barrier_wait} /
+     * {@code pthread_barrier_destroy}, {@code getgrnam_r}, {@code getgrgid_r}. Bionic resolves every
+     * strong symbol while loading, so on Android 5–6 this does not degrade, it fails outright with
+     * "cannot locate symbol". {@code memfd_create} (API 30) is also referenced, but only weakly, so it
+     * is not a barrier.
+     */
+    public static final int RUNTIME_MIN_API = 24;
+
+    public static boolean runtimeSupported() {
+        return Build.VERSION.SDK_INT >= RUNTIME_MIN_API;
+    }
 
     private final Context app;
     private final File root;
@@ -260,6 +278,18 @@ public final class LocalServer {
     /** Unpacks if needed, spawns Node, and waits for the server to answer {@code /healthz}. */
     public synchronized void start(Listener l) throws Exception {
         if (isRunning()) return;
+
+        // Checked here rather than only in the UI, so an intent from anywhere gets the same answer.
+        if (!runtimeSupported()) {
+            note("本机服务器需要 Android 7.0（API 24）及以上。");
+            note("当前系统：Android " + Build.VERSION.RELEASE + "（API " + Build.VERSION.SDK_INT + "）");
+            note("原因：内嵌的 Node 运行时按 API 24 构建，强引用 pthread_barrier_init / getgrnam_r");
+            note("等 API 24 才引入的 libc 符号；更早的系统上动态链接会在 execve 时直接失败，");
+            note("不是权限问题，也不是解包问题，加任何权限都无用。");
+            note("其余功能不受影响：仍然可以填地址连别人的服务器。");
+            throw new Exception("此系统无法运行内嵌服务端：需要 Android 7.0 及以上");
+        }
+
         unpack(l);
 
         port = pickPort();

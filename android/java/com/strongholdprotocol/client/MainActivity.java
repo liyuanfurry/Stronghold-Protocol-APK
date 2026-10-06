@@ -508,6 +508,11 @@ public class MainActivity extends Activity implements AssetCache.Listener {
 
     private void toggleServer() {
         final LocalServer srv = App.localServerOf(this);
+        if (!LocalServer.runtimeSupported()) {
+            Toast.makeText(this, "本机服务器需要 Android 7.0 及以上，当前系统 "
+                + Build.VERSION.RELEASE + " 不支持", Toast.LENGTH_LONG).show();
+            return;
+        }
         if (srv.isRunning()) {
             LocalServerService.stop(this);
             srv.stop();
@@ -620,6 +625,22 @@ public class MainActivity extends Activity implements AssetCache.Listener {
     private void refreshServerUi() {
         LocalServer srv = App.localServerOf(this);
         String ip = NetInfo.localIpv4();
+
+        // Honest dead end beats a button that fails with a linker error nobody can act on.
+        if (!LocalServer.runtimeSupported()) {
+            srvStatus.setText("此系统不支持本机服务器\n"
+                + "内嵌的 Node 运行时需要 Android 7.0（API 24）及以上，当前是 Android "
+                + Build.VERSION.RELEASE + "（API " + Build.VERSION.SDK_INT + "）。\n"
+                + "连别人的服务器不受影响，填地址直接进游戏即可。");
+            srvToggle.setText("本机服务器不可用");
+            srvToggle.setEnabled(false);
+            srvUse.setEnabled(false);
+            srvCopy.setEnabled(false);
+            return;
+        }
+        srvToggle.setEnabled(true);
+        srvUse.setEnabled(true);
+        srvCopy.setEnabled(true);
         if (srv.isRunning()) {
             String lan = (ip == null ? "（未连接局域网）" : "http://" + ip + ":" + srv.port());
             srvStatus.setText((srv.isReady() ? "运行中" : "启动中…")
