@@ -63,15 +63,16 @@ public final class BundleImport {
 
     private BundleImport() {}
 
-    public static void run(final Context context, final Listener l) {
+    /** @param version the release tag to pull, e.g. {@code v0.2.2} */
+    public static void run(final Context context, final String version, final Listener l) {
         final Context app = context.getApplicationContext();
         new Thread(new Runnable() {
             @Override public void run() {
                 File zip = new File(app.getCacheDir(), "upstream-bundle.zip");
                 File stage = new File(app.getFilesDir(), "mirror-import");
                 try {
-                    String tag = Upstream.activeVersion(app);
-                    if (tag == null || tag.isEmpty()) throw new IOException("不知道当前要补哪个版本");
+                    final String tag = version;
+                    if (tag == null || tag.isEmpty()) throw new IOException("没有指定要补哪个版本");
 
                     File overlay = App.cacheOf(app).root();
                     long need = 900L * 1024 * 1024;        // 整合包本身 + 解出来的素材，留余量

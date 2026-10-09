@@ -44,6 +44,8 @@ public class MainActivity extends Activity implements AssetCache.Listener {
     private TextView upStatus;
     private Button upRefresh, upEmbedded;
     private LinearLayout upList;
+    /** Last release list fetched from GitHub, reused by the asset-import picker. */
+    private List<Upstream.Release> upstreamReleases;
 
     private AssetCache cache;
     private LanScanner scanner;
@@ -351,28 +353,90 @@ public class MainActivity extends Activity implements AssetCache.Listener {
 
     // ---- artwork from the upstream bundle ---------------------------------------------------------
 
+    /**
+     * The imported artwork is version-specific, so which version to pull is a question for the player
+     * rather than something to infer from the running server: the whole point is to be able to take a
+     * newer upstream version's art without first switching the embedded server to it.
+     */
     private void confirmBundleImport() {
-        final String tag = Upstream.activeVersion(this);
+        if (upstreamReleases != null && !upstreamReleases.isEmpty()) {
+            showBundleVersionPicker();
+            return;
+        }
+        bundleButton.setEnabled(false);
+        upStatus.setText("正在向 GitHub 查询可用版本…");
+        Upstream.list(new Upstream.ListListener() {
+            @Override public void onList(final boolean ok, final List<Upstream.Release> list, final String error) {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        bundleButton.setEnabled(true);
+                        if (!ok) {
+                            upStatus.setText("查询失败：" + error
+                                + "\nGitHub 在部分网络下不可达，开代理后重试。");
+                            return;
+                        }
+                        upstreamReleases = list;
+                        renderUpstream(list);
+                        showBundleVersionPicker();
+                    }
+                });
+            }
+        });
+    }
+
+    private void showBundleVersionPicker() {
+        final List<Upstream.Release> list = upstreamReleases;
+        if (list == null || list.isEmpty()) {
+            Toast.makeText(this, "还没拿到版本列表，先点「刷新版本列表」", Toast.LENGTH_LONG).show();
+            return;
+        }
+        final String active = Upstream.activeVersion(this);
+        final String[] labels = new String[list.size()];
+        int checked = 0;
+        for (int i = 0; i < list.size(); i++) {
+            Upstream.Release r = list.get(i);
+            StringBuilder b = new StringBuilder(r.tag);
+            if (!r.date.isEmpty()) b.append("　·　").append(r.date);
+            if (i == 0) b.append("　【最新】");
+            if (r.tag.equals(active)) { b.append("　【手机现有】"); checked = i; }
+            labels[i] = b.toString();
+        }
+        final int[] chosen = { checked };
         new AlertDialog.Builder(this)
-            .setTitle("从 GitHub 整合包补素材")
-            .setMessage("下载上游 " + tag + " 的 Release 整合包，从中取出美术与音频写入本机覆盖层。\n\n"
-                + "· 整合包很大（v0.1.4 约 431 MB、v0.1.3 约 290 MB），建议连 Wi-Fi 或在代理下进行\n"
-                + "· 全程先在临时目录解包，成功后才一次性生效，中途失败不会留下新老素材混在一起的覆盖层\n"
-                + "· 现有素材不会被删除，只是被新素材盖住\n"
-                + "· 临时文件会在结束后自动清理\n\n"
-                + "前提是「上游版本 / 本机现有」那个版本有对应的整合包。")
+            .setTitle("要取哪个版本的素材")
+            .setSingleChoiceItems(labels, checked, new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface d, int which) { chosen[0] = which; }
+            })
             .setNegativeButton("取消", null)
-            .setPositiveButton("开始下载", new DialogInterface.OnClickListener() {
-                @Override public void onClick(DialogInterface d, int w) { runBundleImport(); }
+            .setPositiveButton("下一步", new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface d, int w) {
+                    confirmBundleImportOf(list.get(chosen[0]));
+                }
             })
             .show();
     }
 
-    private void runBundleImport() {
+    private void confirmBundleImportOf(final Upstream.Release r) {
+        new AlertDialog.Builder(this)
+            .setTitle("从 GitHub 整合包补素材 · " + r.tag)
+            .setMessage("下载上游 " + r.tag + " 的 Release 整合包，从中取出美术与音频写入本机覆盖层。\n\n"
+                + "· 整合包不小（v0.2.2 约 505 MiB），建议连 Wi-Fi 或在代理下进行\n"
+                + "· 全程先在临时目录解包，成功后才一次性生效，中途失败不会留下新老素材混在一起的覆盖层\n"
+                + "· 现有素材不会被删除，只是被新素材盖住；临时文件结束后自动清理\n\n"
+                + "注意：这是**版本特定**的素材。如果它和你所连服务器跑的游戏版本不一致，"
+                + "画面可能与服务器状态对不上——通常应当选服务器正在跑的那个版本。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("开始下载", new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface d, int w) { runBundleImport(r.tag); }
+            })
+            .show();
+    }
+
+    private void runBundleImport(final String tag) {
         bundleButton.setEnabled(false);
         progress.setVisibility(View.VISIBLE);
         progress.setIndeterminate(true);
-        BundleImport.run(this, new BundleImport.Listener() {
+        BundleImport.run(this, tag, new BundleImport.Listener() {
             @Override public void onProgress(final int percent, final String detail) {
                 runOnUiThread(new Runnable() {
                     @Override public void run() {
@@ -426,6 +490,7 @@ public class MainActivity extends Activity implements AssetCache.Listener {
     }
 
     private void renderUpstream(List<Upstream.Release> list) {
+        upstreamReleases = list;
         upList.removeAllViews();
         final String active = Upstream.activeVersion(this);
         String newest = list.isEmpty() ? null : list.get(0).tag;
