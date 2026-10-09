@@ -15,11 +15,11 @@
 把 [`sganggs/Stronghold-Protocol`](https://github.com/sganggs/Stronghold-Protocol) 这个浏览器自走棋联机游戏包成
 Android APK，解决三件事：
 
-- **约 340 MiB 素材随包预装**（网页素材 + 官方客户端提取的「本机美术」），装完即玩、首次启动零下载；
+- **约 615 MiB 素材随包预装**（上游 v0.2.2 的网页素材 + 官方客户端提取的「本机美术」），装完即玩、首次启动零下载；
 - **可以在 App 里校对资源版本、按需增量在线更新**（只下变动的文件）；
 - **手机自己就能当服务器**：内嵌 Node 运行时，启动后在局域网里广播一个地址，同网段的设备直接连。
 
-产物：`StrongholdProtocol-2.3.apk` · 约 315 MiB · minSdk 21 / targetSdk 34 · v1+v2+v3 签名
+产物：`StrongholdProtocol-4.1.apk` · 约 676 MiB · minSdk 21 / targetSdk 34 · v1+v2+v3 签名
 
 > **这个客户端不含任何内置服务器地址，包名也不含任何域名。**
 > APK 是会流传的，把服务器地址写死在里面，等于给搭建者的机器挂一块公网招牌。
@@ -56,7 +56,7 @@ Android APK，解决三件事：
 
 | 层 | 内容 | 位置 | 何时更新 |
 |---|---|---|---|
-| **内置包 bundle** | 5510 个文件 · 336.9 MiB，两份索引：`data/assets.json`（干员立绘、Spine、音频、字体、vendor，272 MiB）＋ `data/local-assets.json`（官方客户端提取的棋盘图集、界面贴图、表情，1482 个文件 / 68 MB） | **APK 里** | 重新发版 |
+| **内置包 bundle** | 12256 个文件 · 614.5 MiB，两份索引：`data/assets.json`（干员立绘、Spine、中/日语音、字体、vendor，548 MiB）＋ `data/local-assets.json`（官方客户端提取的棋盘图集、界面贴图、表情，1599 个文件 / 64 MB） | **APK 里** | 重新发版 |
 | **覆盖层 overlay** | 相对内置包变动过的文件 | 应用私有目录 | 「在线更新资源」，只下变动的 |
 | **页面 + 联机** | `index.html` / `js/` / `css/` / `data/*.json` / `/ws` | **服务器** | 每次启动实时取 |
 
@@ -64,7 +64,7 @@ Android APK，解决三件事：
 
 ## 校对版本 / 在线更新
 
-内置包在构建时记下了每个文件的 **ETag**（`baseline/etags.tsv`，5510/5510 全覆盖）和当时的清单版本
+内置包在构建时记下了每个文件的 **ETag**（`baseline/etags.tsv`，12256/12256 全覆盖）和当时的清单版本
 （`baseline/info.txt`）。ETag 由服务端的 `size + mtime` 决定，本地编不出来，必须问服务器要。
 
 ```
@@ -76,7 +76,7 @@ Android APK，解决三件事：
            服务器新增的 → 直接下载
 ```
 
-上游加几个干员的那种更新，实际传输是**几 MB**，不是重下一次 340 MiB。
+上游加几个干员的那种更新，实际传输是**几 MB**，不是重下一次 615 MiB。
 
 **更新地址**在启动页单独一栏，留空则用游戏服务器。指镜像站、CDN 或另一台服务器都行。
 
@@ -149,7 +149,7 @@ linker 必须能**读**这个二进制。（现在这条路已经绕开了——
 
 只放源码。**不含游戏素材，不含 APK，也不含 node 运行时与服务端代码**：
 
-- `android/assets/mirror/**`（约 337 MiB 的游戏美术 / 音频，含服务器 `/assets/local/**` 下那批官方客户端美术）版权属鹰角，不在 GPL 范围内，
+- `android/assets/mirror/**`（约 615 MiB 的游戏美术 / 音频，含服务器 `/assets/local/**` 下那批官方客户端美术）版权属鹰角，不在 GPL 范围内，
   且 GitHub 对单文件有 100 MB 限制。用 `build_bundle.py` / `refresh_bundle.py` 自行装配。
 - `android/assets/{node,gsrv}/**` 不进仓库：`node` 是 Termux 的二进制，`gsrv` 是**上游 GPL 源码**，
   应当留在上游仓库而不是 vendor 到这里。用 `make_native_payload.py` 一键重建。
@@ -242,7 +242,7 @@ python3 audit_api.py out/classes platform-35.zip 21
 
 - 签名 v1 / v2 / v3 全部 `Verifies`；`unzip -t` 全条目 **No errors detected**。
 - 4271 个条目、未压缩条目的**对齐违规 0 个**、重复条目 0。
-- `baseline/index.txt` 里 5510 条路径全部能在 APK 里取到；`payload.txt` 218 条同理，缺 0。
+- `baseline/index.txt` 里 12256 条路径全部能在 APK 里取到；`payload.txt` 218 条同理，缺 0。
 - 版本校对：内置 `1:7f118cf0f7bb` vs 服务器 `/data/assets.json` → 一致。
 - 从 APK 里读出的素材与服务器逐字节比对：抽样 SHA-256 全部一致。
 - 增量更新：带内置 ETag 请求抽样 10 个文件（含 `/media/` 音频路由）→ **10/10 返回 304**，零下载。
@@ -254,7 +254,7 @@ python3 audit_api.py out/classes platform-35.zip 21
 ## 已知限制
 
 - 更新与本机服务器跑在应用进程内。息屏靠唤醒锁继续，但**从最近任务划掉应用会中断**；下次会接着来。
-- 一次「在线更新」要对 5510 个文件各发一个条件请求，流量极小但按服务器响应速度可能要几分钟。
+- 一次「在线更新」要对 12256 个文件各发一个条件请求，流量极小但按服务器响应速度可能要几分钟。
 - 覆盖层是整文件替换，没有二进制差分。单张立绘级别没问题，上游若换整套 3D 棋盘那次会比较大。
 - APK 约 372 MiB，**每次改 App 代码重新发版都是这个体积**（素材更新走增量，不受影响）。
 - **手机当主机时，纯浏览器客户端拿不到美术音频**（页面与逻辑正常）。跑本客户端的设备不受影响。

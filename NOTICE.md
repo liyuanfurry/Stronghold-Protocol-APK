@@ -38,11 +38,14 @@ Copyright (C) 2026 本客户端贡献者
 
 | | 内容 | 本机装配方式 |
 |---|---|---|
-| **网页素材** | `public/assets/**`、`public/fonts/**`、`vendor/**`，约 272 MiB | `build_bundle.py`（从上游发布包或你的服务器） |
-| **本机美术** | `/assets/local/**`：官方棋盘图集与裁剪表、界面贴图、表情、玩法说明页等，约 1482 个文件 / 68 MB | `make_localart_bundle.py`（按你服务器上 `data/local-assets.json` 的索引取回） |
+| **网页素材** | `public/assets/**`、`public/fonts/**`、`vendor/**`，约 548 MiB（v0.2.2 起含中/日语音） | `build_bundle.py`（从上游发布包或你的服务器） |
+| **本机美术** | `/assets/local/**`：官方棋盘图集与裁剪表、界面贴图、表情、玩法说明页等，约 1599 个文件 / 64 MB | `make_localart_bundle.py`（按你服务器上 `data/local-assets.json` 的索引取回） |
 
 「本机美术」这个名字来自上游：它指的是**从《明日方舟》官方客户端本地提取**、再由服务器运营者放到
 `/assets/local/**` 下的那批官方美术。它是**可选**的——服务器没有这份索引时客户端照常工作，只是用简化美术。
+
+从上游 v0.2.2 起，`public/assets/local/**` 也已随上游整合包分发；但上游的 `data/assets.json` 仍不索引它
+（0 条命中），所以 `make_localart_bundle.py` 这一步不能省。
 
 ## 3. 不属于本项目、不受 GPL 约束的内容
 
