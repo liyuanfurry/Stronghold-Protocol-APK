@@ -19,6 +19,7 @@ public final class Prefs {
     private static final String K_ACTIVE_GSRV = "activeGsrv";
     private static final String K_CACHE_BUST = "cacheBust";
     private static final String K_LOCAL_ART_HASH = "localArtHash";
+    private static final String K_UPSTREAM_LIST = "upstreamList";
 
     private Prefs() {}
 
@@ -83,6 +84,16 @@ public final class Prefs {
 
     public static void setLocalArtHash(Context c, String v) {
         sp(c).edit().putString(K_LOCAL_ART_HASH, v == null ? "" : v).apply();
+    }
+
+    /** Last release list fetched from GitHub, as "tag\tdate" lines — so the picker still lists the
+     *  versions a player can choose from when GitHub is unreachable (which it is on many networks). */
+    public static String upstreamList(Context c) {
+        return sp(c).getString(K_UPSTREAM_LIST, "");
+    }
+
+    public static void setUpstreamList(Context c, String v) {
+        sp(c).edit().putString(K_UPSTREAM_LIST, v == null ? "" : v).apply();
     }
 
     public static int cacheBust(Context c) {

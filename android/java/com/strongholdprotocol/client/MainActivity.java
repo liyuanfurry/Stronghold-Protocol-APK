@@ -19,6 +19,7 @@ import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -373,11 +374,26 @@ public class MainActivity extends Activity implements AssetCache.Listener {
                         if (!ok) {
                             upStatus.setText("查询失败：" + error
                                 + "\nGitHub 在部分网络下不可达，开代理后重试。");
-                            return;
+                            // Never leave the button looking dead: a status line further up the page is
+                            // easy to miss, and "nothing happened" is what the player reports.
+                            if (upstreamReleases != null && !upstreamReleases.isEmpty()) {
+                                Toast.makeText(MainActivity.this,
+                                    "查询失败，用上次拿到的版本列表", Toast.LENGTH_LONG).show();
+                                showBundleVersionPicker();
+                                return;
+                            }
+                            new AlertDialog.Builder(MainActivity.this)
+                                .setTitle("取不到版本列表")
+                                .setMessage("要从 GitHub 取素材，得先能问到它有哪些版本。\n\n"
+                                    + "错误：" + error + "\n\n"
+                                    + "GitHub 在部分网络下不可达——开代理后再点一次。")
+                                .setPositiveButton("知道了", null)
+                                .show();
+                        } else {
+                            upstreamReleases = list;
+                            renderUpstream(list);
+                            showBundleVersionPicker();
                         }
-                        upstreamReleases = list;
-                        renderUpstream(list);
-                        showBundleVersionPicker();
                     }
                 });
             }
@@ -385,11 +401,20 @@ public class MainActivity extends Activity implements AssetCache.Listener {
     }
 
     private void showBundleVersionPicker() {
-        final List<Upstream.Release> list = upstreamReleases;
-        if (list == null || list.isEmpty()) {
+        List<Upstream.Release> fetched = upstreamReleases;
+        boolean stale = false;
+        if (fetched == null || fetched.isEmpty()) {
+            // Fall back to the last list we saw, so the player can still see and choose versions offline.
+            fetched = readCachedUpstream();
+            stale = !fetched.isEmpty();
+        }
+        if (fetched.isEmpty()) {
             Toast.makeText(this, "还没拿到版本列表，先点「刷新版本列表」", Toast.LENGTH_LONG).show();
             return;
         }
+        upstreamReleases = fetched;
+        final List<Upstream.Release> list = fetched;   // final: captured by the dialog listeners below
+        final boolean fromCache = stale;
         final String active = Upstream.activeVersion(this);
         final String[] labels = new String[list.size()];
         int checked = 0;
@@ -403,7 +428,7 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         }
         final int[] chosen = { checked };
         new AlertDialog.Builder(this)
-            .setTitle("要取哪个版本的素材")
+            .setTitle(fromCache ? "要取哪个版本的素材（离线列表）" : "要取哪个版本的素材")
             .setSingleChoiceItems(labels, checked, new DialogInterface.OnClickListener() {
                 @Override public void onClick(DialogInterface d, int which) { chosen[0] = which; }
             })
@@ -414,6 +439,19 @@ public class MainActivity extends Activity implements AssetCache.Listener {
                 }
             })
             .show();
+    }
+
+    /** Rebuilds the picker's list from the last successful GitHub query. */
+    private List<Upstream.Release> readCachedUpstream() {
+        List<Upstream.Release> out = new ArrayList<Upstream.Release>();
+        String cached = Prefs.upstreamList(this);
+        if (cached == null) return out;
+        for (String line : cached.split("\n")) {
+            int t = line.indexOf('\t');
+            if (t <= 0) continue;
+            out.add(new Upstream.Release(line.substring(0, t), line.substring(0, t), line.substring(t + 1)));
+        }
+        return out;
     }
 
     private void confirmBundleImportOf(final Upstream.Release r) {
@@ -491,6 +529,9 @@ public class MainActivity extends Activity implements AssetCache.Listener {
 
     private void renderUpstream(List<Upstream.Release> list) {
         upstreamReleases = list;
+        StringBuilder cache = new StringBuilder();
+        for (Upstream.Release r : list) cache.append(r.tag).append('\t').append(r.date).append('\n');
+        Prefs.setUpstreamList(this, cache.toString());
         upList.removeAllViews();
         final String active = Upstream.activeVersion(this);
         String newest = list.isEmpty() ? null : list.get(0).tag;
