@@ -17,7 +17,7 @@ OUT="$HERE/out"
 MIN_SDK="${MIN_SDK:-21}"
 TARGET_SDK="${TARGET_SDK:-34}"
 VERSION_CODE=1
-VERSION_NAME="3.2"
+VERSION_NAME="4.0"
 
 KEYSTORE="$HERE/keys/stronghold.keystore"
 KS_PASS="stronghold"
