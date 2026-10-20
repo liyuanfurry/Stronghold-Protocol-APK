@@ -123,7 +123,11 @@ public class GameWebViewClient extends WebViewClient {
 
     private static WebResourceResponse respond(AssetCache.Source src, String mime) {
         if (src == null) return null;
-        WebResourceResponse r = new WebResourceResponse(mime, null, src.stream);
+        // A text response without a declared encoding is not treated as a document: the WebView renders
+        // index.html as plain source instead of parsing it. Images do not care, text does.
+        String encoding = (mime.startsWith("text/") || mime.equals("application/json")
+            || mime.equals("image/svg+xml")) ? "utf-8" : null;
+        WebResourceResponse r = new WebResourceResponse(mime, encoding, src.stream);
         r.setStatusCodeAndReasonPhrase(200, "OK");
         Map<String, String> headers = new HashMap<String, String>();
         headers.put("Content-Type", mime);
@@ -150,7 +154,7 @@ public class GameWebViewClient extends WebViewClient {
         if (p.endsWith(".woff")) return "font/woff";
         if (p.endsWith(".otf")) return "font/otf";
         if (p.endsWith(".ttf")) return "font/ttf";
-        if (p.equals("/") || p.isEmpty() || p.endsWith(".html")) return "text/html; charset=utf-8";
+        if (p.equals("/") || p.isEmpty() || p.endsWith(".html")) return "text/html";
         if (p.endsWith(".css")) return "text/css";
         if (p.endsWith(".js") || p.endsWith(".mjs")) return "text/javascript";
         if (p.endsWith(".json")) return "application/json";
