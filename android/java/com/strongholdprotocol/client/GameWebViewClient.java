@@ -60,6 +60,14 @@ public class GameWebViewClient extends WebViewClient {
                     mimeOf(path));
             }
 
+            // The client itself ships in the APK as well (it doubles as the embedded server's web root),
+            // so startup no longer waits on the host for its code. Anything not bundled falls through.
+            if (path.isEmpty() || path.equals("/") || path.equals("/index.html")
+                || path.startsWith("/js/") || path.startsWith("/css/")) {
+                AssetCache.Source clientSource = cache.openClient(path);
+                if (clientSource != null) return respond(clientSource, mimeOf(path));
+            }
+
             if (path.startsWith("/assets/") || path.startsWith("/fonts/") || path.startsWith("/vendor/")) {
                 return respond(cache.open(path), mimeOf(path));
             }

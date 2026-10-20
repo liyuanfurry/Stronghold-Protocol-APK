@@ -181,6 +181,27 @@ public final class AssetCache {
         this.assets = this.app.getAssets();
         this.root = new File(this.app.getFilesDir(), "mirror");
         this.metaFile = new File(this.app.getFilesDir(), META_FILE);
+        resetStateIfBundleChanged();
+    }
+
+    /**
+     * A new APK can ship a different payload, and then the recorded sync state describes the *old*
+     * bundle: the update check would compare it with the host and announce "有更新" although the app
+     * already carries exactly what the host serves, and the overlay would keep shadowing the fresh
+     * bundle with last version's files. Seeding the state from the bundle and dropping the overlay the
+     * one time the bundle changes keeps disk, bundle and host describing the same payload.
+     */
+    private void resetStateIfBundleChanged() {
+        String bundled = bundledHash();
+        if (bundled == null || bundled.isEmpty()) return;
+        String seeded = Prefs.bundleSeeded(app);
+        if (bundled.equals(seeded)) return;
+        Log.i(TAG, "bundle changed (" + shortHash(seeded) + " -> " + shortHash(bundled)
+            + "): re-seeding sync state, dropping the previous overlay");
+        Prefs.setManifestHash(app, bundled);
+        Prefs.setLocalArtHash(app, "");
+        Prefs.setBundleSeeded(app, bundled);
+        if (seeded != null && !seeded.isEmpty()) clearOverlay();
     }
 
     public File root() { return root; }
@@ -208,6 +229,27 @@ public final class AssetCache {
     // ---- availability -----------------------------------------------------------------------------
 
     /** True when the APK itself carries this path. */
+    /**
+     * Opens the client itself — the page, its scripts and stylesheets — out of {@code assets/gsrv/public}.
+     *
+     * <p>The same files already ship for the embedded server. Serving them to the remote-server mode as
+     * well removes the host's uplink from the critical path at startup: before this, every launch waited
+     * on the host for 237 files / 4.6 MiB of code before the first pixel, which is what "loading takes
+     * forever" looked like even with all 812 MiB of artwork sitting in the APK.
+     *
+     * @return a stream the caller must close, or null so the caller can fall back to the network
+     */
+    public Source openClient(String path) {
+        String p = strip(path);
+        if (p == null) return null;
+        String rel = p.equals("/") || p.isEmpty() ? "index.html" : (p.startsWith("/") ? p.substring(1) : p);
+        try {
+            return new Source(new BufferedInputStream(assets.open("gsrv/public/" + rel), 32 * 1024), -1);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     public boolean isBundled(String path) {
         String p = strip(path);
         return p != null && bundledIndex().contains(p);

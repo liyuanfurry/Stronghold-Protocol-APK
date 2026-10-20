@@ -20,6 +20,7 @@ public final class Prefs {
     private static final String K_CACHE_BUST = "cacheBust";
     private static final String K_LOCAL_ART_HASH = "localArtHash";
     private static final String K_UPSTREAM_LIST = "upstreamList";
+    private static final String K_BUNDLE_SEEDED = "bundleSeeded";
 
     private Prefs() {}
 
@@ -94,6 +95,13 @@ public final class Prefs {
 
     public static void setUpstreamList(Context c, String v) {
         sp(c).edit().putString(K_UPSTREAM_LIST, v == null ? "" : v).apply();
+    }
+
+    /** The bundle hash the sync state was last seeded from, so an upgrade can tell it is stale. */
+    public static String bundleSeeded(Context c) { return sp(c).getString(K_BUNDLE_SEEDED, ""); }
+
+    public static void setBundleSeeded(Context c, String v) {
+        sp(c).edit().putString(K_BUNDLE_SEEDED, v == null ? "" : v).apply();
     }
 
     public static int cacheBust(Context c) {
