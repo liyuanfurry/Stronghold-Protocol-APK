@@ -255,6 +255,23 @@ public class MainActivity extends Activity implements AssetCache.Listener {
         startActivity(i);
     }
 
+    /** Offers the sync instead of starting it: the transfer can be hundreds of megabytes. */
+    private void confirmSync(AssetCache.Version v, String remote) {
+        StringBuilder m = new StringBuilder();
+        m.append(v.hasUpdate() ? "服务器上的素材清单变了（" + remote + "）。"
+                               : "服务器上的本机美术清单变了。");
+        m.append("\n\n同步只传变动的文件（按 ETag 比对，没变的服务器只回 304），");
+        m.append("但如果隔了几个版本，可能要下几百 MB。\n\n建议 Wi-Fi 下进行。");
+        new AlertDialog.Builder(this)
+            .setTitle("资源有更新")
+            .setMessage(m.toString())
+            .setNegativeButton("稍后", null)
+            .setPositiveButton("现在同步", new DialogInterface.OnClickListener() {
+                @Override public void onClick(DialogInterface d, int w) { startUpdate(false); }
+            })
+            .show();
+    }
+
     private void startUpdate(boolean full) {
         String base = updateBaseFromUi();
         if (base.isEmpty()) { needAddress("资源更新地址"); return; }
@@ -317,16 +334,17 @@ public class MainActivity extends Activity implements AssetCache.Listener {
                 if (v.hasLocalUpdate()) line.append("　·　本机美术也有更新");
                 serverInfo.setText(line.toString());
 
+                refreshResourceInfo();
                 if (v.hasAnyUpdate()) {
-                    status.setText((v.hasUpdate() ? "发现资源更新：" + cur + " → " + rem : "发现本机美术更新")
-                        + "，自动同步中（只传变动的文件）…");
+                    status.setText(v.hasUpdate()
+                        ? "发现资源更新：" + cur + " → " + rem : "发现本机美术更新");
+                    // Ask before transferring. Auto-starting the sync made a plain version check feel
+                    // like a slow check: the check itself is two small requests, but it immediately
+                    // began pulling whatever the host had added.
+                    confirmSync(v, rem);
                 } else if (!auto) {
                     status.setText("资源已是最新（版本 " + rem + "）");
                 }
-                refreshResourceInfo();
-                // Sync without being asked: incremental by ETag, so an unchanged tree costs requests
-                // rather than bytes, and the local-art index is compared on the same pass.
-                if (v.hasAnyUpdate()) startUpdate(false);
             }
         });
     }
@@ -499,10 +517,51 @@ public class MainActivity extends Activity implements AssetCache.Listener {
                         refreshResourceInfo();
                         Toast.makeText(MainActivity.this,
                             ok ? "素材已从整合包补齐" : message, Toast.LENGTH_LONG).show();
+                        if (ok) recordImportedHashes(message);
                     }
                 });
             }
         });
+    }
+
+    /**
+     * Compares what the archive contained with what the update host serves, and records the sync state
+     * when they agree.
+     *
+     * <p>Without this the import is invisible to the update check: the files are in the overlay, but the
+     * recorded manifest hash still points at the older bundle, so the very next check reports "有更新"
+     * and re-downloads everything the player just unpacked. When the host serves something different the
+     * re-download is correct — a host can convert its artwork (this one serves WebP) and that really is
+     * different content — so the difference is reported instead of being papered over.
+     */
+    private void recordImportedHashes(final String done) {
+        final String base = updateBaseFromUi();
+        final String media = BundleImport.lastMediaHash;
+        final String local = BundleImport.lastLocalHash;
+        if (base.isEmpty()) { status.setText(done); return; }
+        status.setText(done + "\n正在和服务器核对，避免下次重复下载…");
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final String[] hashes = cache.probeHashes(base);
+                final boolean mediaSame = media != null && !media.isEmpty() && media.equals(hashes[0]);
+                final boolean localSame = local != null && !local.isEmpty() && local.equals(hashes[1]);
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (mediaSame) Prefs.setManifestHash(MainActivity.this, hashes[0]);
+                        if (localSame) Prefs.setLocalArtHash(MainActivity.this, hashes[1]);
+                        StringBuilder b = new StringBuilder(done);
+                        b.append("\n\n与服务器核对：");
+                        if (mediaSame) b.append("素材清单一致，已记录，下次不会再重复下载。");
+                        else b.append("素材清单不同（服务器是另一版，或图集格式不同），")
+                               .append("下次同步仍会按 ETag 更新——那是真的不一样。");
+                        if (localSame) b.append("\n本机美术清单一致，已记录。");
+                        else if (!localSame) b.append("\n本机美术清单与服务器不同，同步时会更新它。");
+                        status.setText(b.toString());
+                        refreshResourceInfo();
+                    }
+                });
+            }
+        }, "bundle-reconcile").start();
     }
 
     // ---- upstream versions ------------------------------------------------------------------------

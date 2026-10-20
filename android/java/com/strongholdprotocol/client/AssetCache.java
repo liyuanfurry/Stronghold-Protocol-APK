@@ -322,6 +322,27 @@ public final class AssetCache {
     }
 
     /** One manifest request. Never throws — unreachable hosts come back as an unreachable Version. */
+    /**
+     * The host's two manifest identifiers, for callers that need to compare rather than sync.
+     *
+     * @return {media "version:hash", local-art fingerprint} — either may be empty
+     */
+    public String[] probeHashes(String base) {
+        String media = "", local = "";
+        try {
+            JSONObject j = new JSONObject(httpGetString(base + MANIFEST_PATH));
+            media = j.opt("version") + ":" + j.opt("hash");
+        } catch (Exception e) {
+            Log.i(TAG, "probeHashes: no media manifest (" + e.getMessage() + ")");
+        }
+        try {
+            local = fingerprint(httpGetString(base + LOCAL_MANIFEST_PATH));
+        } catch (Exception e) {
+            Log.i(TAG, "probeHashes: no local manifest (" + e.getMessage() + ")");
+        }
+        return new String[]{media, local};
+    }
+
     private Version probeVersion(String updateBase) {
         try {
             String body = httpGetString(updateBase + MANIFEST_PATH);

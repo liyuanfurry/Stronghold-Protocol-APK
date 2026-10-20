@@ -19,6 +19,8 @@ import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
+import org.json.JSONObject;
+
 /**
  * Refills the artwork from an upstream release bundle.
  *
@@ -61,7 +63,39 @@ public final class BundleImport {
         void onDone(boolean ok, String message);
     }
 
+    /**
+     * Manifest hashes of the bundle that was just imported, in the same {@code version:hash} form the
+     * update check uses. The caller compares them with the host's: on a match it can record the sync
+     * state and spare the player a re-download of everything it just unpacked.
+     */
+    public static volatile String lastMediaHash = "";
+    public static volatile String lastLocalHash = "";
+
     private BundleImport() {}
+
+    /** Reads the two manifests out of the archive the same way the game would. */
+    private static void rememberHashes(ZipFile zf, String prefix) {
+        lastMediaHash = readHash(zf, prefix + "data/assets.json");
+        lastLocalHash = readHash(zf, prefix + "data/local-assets.json");
+    }
+
+    private static String readHash(ZipFile zf, String entry) {
+        try {
+            ZipEntry e = zf.getEntry(entry);
+            if (e == null) return "";
+            java.io.InputStream in = zf.getInputStream(e);
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(1 << 16);
+            byte[] buf = new byte[1 << 16];
+            int n;
+            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+            in.close();
+            JSONObject o = new JSONObject(new String(bos.toByteArray(), "UTF-8"));
+            String h = o.opt("hash") == null ? "" : String.valueOf(o.opt("hash"));
+            return h.isEmpty() ? "" : (o.opt("version") + ":" + h);
+        } catch (Exception e) {
+            return "";
+        }
+    }
 
     /** @param version the release tag to pull, e.g. {@code v0.2.2} */
     public static void run(final Context context, final String version, final Listener l) {
@@ -206,6 +240,7 @@ public final class BundleImport {
                 if (slash > 0) { prefix = name.substring(0, slash + 1); break; }
             }
             if (prefix == null) throw new IOException("整合包结构无法识别");
+            rememberHashes(zf, prefix);
 
             List<ZipEntry> wanted = new ArrayList<ZipEntry>();
             List<String> targets = new ArrayList<String>();

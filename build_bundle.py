@@ -140,7 +140,9 @@ def main():
         if etag:
             etags[path] = etag
         local = os.path.join(mirror, path.lstrip("/"))
-        if not os.path.isfile(local) or os.path.getsize(local) != length:
+        # Only fetch what the zip did not give us. The size comparison that used to live here fired on
+        # every path in practice and turned a 5-minute ETag sweep into a 726 MiB re-download.
+        if not os.path.isfile(local):
             need_fetch.append((path, length))
 
     print("  %d paths need the body from the server" % len(need_fetch))
