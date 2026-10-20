@@ -164,6 +164,7 @@ public final class AssetCache {
     private volatile Set<String> bundledIndex;
     private volatile boolean bundleRead;
     private volatile String bundledHash = "";
+    private volatile String bundledLocalArt = "";
     private volatile int bundledFiles = -1;
     private volatile long bundledBytes = -1;
 
@@ -199,7 +200,10 @@ public final class AssetCache {
         Log.i(TAG, "bundle changed (" + shortHash(seeded) + " -> " + shortHash(bundled)
             + "): re-seeding sync state, dropping the previous overlay");
         Prefs.setManifestHash(app, bundled);
-        Prefs.setLocalArtHash(app, "");
+        // Seed the local-art state from the bundle instead of clearing it: an empty value can never
+        // match the host, so every launch would announce "本机美术清单变了" and offer a pointless sync.
+        String localArt = bundledLocalArt();
+        Prefs.setLocalArtHash(app, localArt == null ? "" : localArt);
         Prefs.setBundleSeeded(app, bundled);
         if (seeded != null && !seeded.isEmpty()) clearOverlay();
     }
@@ -325,6 +329,12 @@ public final class AssetCache {
     public long bundledBytes() {
         readBundle();
         return bundledBytes > 0 ? bundledBytes : 0L;
+    }
+
+    /** The local-art fingerprint the bundle shipped with, recorded in baseline/info.txt. */
+    public String bundledLocalArt() {
+        readBundle();
+        return bundledLocalArt;
     }
 
     public String bundledHash() {
@@ -820,6 +830,7 @@ public final class AssetCache {
                     String k = line.substring(0, t);
                     String v = line.substring(t + 1).trim();
                     if ("hash".equals(k)) bundledHash = v;
+                    else if ("localart".equals(k)) bundledLocalArt = v;
                     else if ("files".equals(k)) { try { bundledFiles = Integer.parseInt(v); } catch (Exception ignored) { } }
                     else if ("bytes".equals(k)) { try { bundledBytes = Long.parseLong(v); } catch (Exception ignored) { } }
                 }

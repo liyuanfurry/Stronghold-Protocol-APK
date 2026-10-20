@@ -150,6 +150,7 @@ public class GameWebViewClient extends WebViewClient {
         if (p.endsWith(".woff")) return "font/woff";
         if (p.endsWith(".otf")) return "font/otf";
         if (p.endsWith(".ttf")) return "font/ttf";
+        if (p.equals("/") || p.isEmpty() || p.endsWith(".html")) return "text/html; charset=utf-8";
         if (p.endsWith(".css")) return "text/css";
         if (p.endsWith(".js") || p.endsWith(".mjs")) return "text/javascript";
         if (p.endsWith(".json")) return "application/json";
